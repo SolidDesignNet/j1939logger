@@ -4,13 +4,17 @@ use std::{
     time::Duration,
 };
 
-use clap::Parser;
+use anyhow::Error;
 use fltk::{
-    app, enums,
-    prelude::{GroupExt, WidgetExt},
+    app,
+    enums::{self, Shortcut},
+    group::{Pack, PackType},
+    menu,
+    prelude::{GroupExt, MenuExt, WidgetBase, WidgetExt},
+    table::Table,
     window::Window,
 };
-use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, ConnectionDescriptor};
+use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
 use simple_table::simple_table::{SimpleModel, SimpleTable};
 use timer::Timer;
 
@@ -55,16 +59,39 @@ impl SimpleModel for PacketModel {
 
 fn main() -> Result<(), anyhow::Error> {
     let bus: MultiQueue<J1939Packet> = MultiQueue::new();
-    let mut rp1210 = ConnectionDescriptor::parse().connect(bus.clone())?;
-    rp1210.run();
+    // let mut rp1210 = ConnectionDescriptor::parse().connect(bus.clone())?;
+    // rp1210.run();
 
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
 
     let app = app::App::default();
-    let mut wind = Window::default().with_size(400, 600).with_label("J1939 Log");
-    let mut table = SimpleTable::new(Box::new(packet_model));
-    table.set_font(enums::Font::Screen, 12);
+    let mut wind = Window::default()
+        .with_size(400, 600)
+        .with_label("J1939 Log");
+
+    let mut pack = Pack::default_fill();
+    pack.set_type(PackType::Vertical);
+
+    let mut menu = menu::SysMenuBar::default().with_size(20, 35);
+    let list = packet_model.list.clone();
+    menu.add(
+        "&Action/Clear\t",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_b| {
+            list.lock().unwrap().clear();
+        },
+    );
+
+    add_rp1210_menu(&mut menu, bus.clone())?;
+
+    let table = Table::default();
+    let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
+    simple_table.set_font(enums::Font::Screen, 12);
+
+    pack.resizable(&table);
+    pack.end();
     wind.end();
     wind.resizable(&wind);
     wind.show();
@@ -72,11 +99,35 @@ fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
     let timer = Timer::new(); // requires variable, so that it isn't dropped.
     let _redraw_task = timer.schedule_repeating(chrono::Duration::milliseconds(200), move || {
-        table.redraw();
+        simple_table.redraw();
     });
 
     // run the app
     app.run().unwrap();
 
+    Ok(())
+}
+
+fn add_rp1210_menu(menu: &mut menu::SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
+    for p in rp1210_parsing::list_all_products()? {
+        let product_description = p.description.clone();
+        for d in p.devices {
+            let name = format!("&{}/{} {}\t", &product_description, &d.name, &d.description);
+            let bus = bus.clone();
+            let dev_name = &d.name;
+            let device = d.id;
+            menu.add(
+                &dev_name,
+                Shortcut::None,
+                menu::MenuFlag::Normal,
+                move |_b| {
+                    Rp1210::new(&name, device, "J1939:Baud=Auto", 0xF9, bus.clone())
+                        .unwrap()
+                        .run();
+                },
+            );
+        }
+    }
+    //todo!()
     Ok(())
 }
