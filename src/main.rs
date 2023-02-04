@@ -159,14 +159,10 @@ fn add_rp1210_menu(
     let adapter = Arc::new(RefCell::new(Option::None));
 
     let connection_string_fn = Arc::new(connection_string_fn);
-    for p in rp1210_parsing::list_all_products()? {
-        let product_description = p.id.clone();
-        for device in p.devices {
-            let id = p.id.clone();
-            let name = format!(
-                "&RP1210/{}/{}: {}\t",
-                &product_description, &device.name, &device.description
-            );
+    for product in rp1210_parsing::list_all_products()? {
+        for device in product.devices {
+            let name = format!("&RP1210/{}/{}\t", &product.description, &device.description);
+            let id = product.id.clone();
             let bus = bus.clone();
             let device_id = device.id;
             let adapter = adapter.clone();
