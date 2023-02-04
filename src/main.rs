@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{
     cell::RefCell,
     fs::File,
@@ -11,7 +13,7 @@ use std::{
 use anyhow::Error;
 use fltk::{
     app,
-    dialog::FileDialog,
+    dialog::{message_default, message_icon_label, FileDialog},
     enums::{self, Shortcut},
     group::Pack,
     input::Input,
@@ -76,7 +78,7 @@ fn main() -> Result<(), anyhow::Error> {
     let app = app::App::default();
     let mut wind = Window::default()
         .with_size(400, 600)
-        .with_label("J1939 Log");
+        .with_label(&format!("J1939 Log {}", &env!("CARGO_PKG_VERSION")));
 
     let pack = Pack::default_fill();
 
@@ -96,6 +98,9 @@ fn main() -> Result<(), anyhow::Error> {
             move |_b| {
                 let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
                 fc.show();
+                if fc.filenames().is_empty() {
+                    return;
+                }
                 let mut out = BufWriter::new(
                     File::create(fc.filename()).expect("Failed to create log file."),
                 );
@@ -172,11 +177,16 @@ fn add_rp1210_menu(
                 adapter.replace(None);
                 eprintln!("LOADING: {} {}", id, cs_fn());
                 // load new DLL
-                let mut rp1210 =
-                    Rp1210::new(id.as_str(), device_id, cs_fn().as_str(), 0xF9, bus.clone())
-                        .unwrap();
-                rp1210.run();
-                adapter.replace(Some(rp1210));
+                match Rp1210::new(id.as_str(), device_id, cs_fn().as_str(), 0xF9, bus.clone()) {
+                    Ok(mut rp1210) => {
+                        rp1210.run();
+                        adapter.replace(Some(rp1210));
+                    }
+                    Err(err) => {
+                        message_icon_label("Fail");
+                        message_default(&format!("Failed to open adapter: {}", err));
+                    }
+                }
             });
         }
     }
