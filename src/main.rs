@@ -1,4 +1,8 @@
 use std::{
+    cell::RefCell,
+    fs::File,
+    io::{BufWriter, Write},
+    option::Option,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -7,10 +11,12 @@ use std::{
 use anyhow::Error;
 use fltk::{
     app,
+    dialog::FileDialog,
     enums::{self, Shortcut},
-    group::{Pack, PackType},
-    menu,
-    prelude::{GroupExt, MenuExt, WidgetBase, WidgetExt},
+    group::Pack,
+    input::Input,
+    menu::{self, SysMenuBar},
+    prelude::{GroupExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt},
     table::Table,
     window::Window,
 };
@@ -18,11 +24,14 @@ use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210
 use simple_table::simple_table::{SimpleModel, SimpleTable};
 use timer::Timer;
 
+/// simple table model to represent log
 #[derive(Default)]
 struct PacketModel {
     pub list: Arc<Mutex<Vec<J1939Packet>>>,
 }
+
 impl PacketModel {
+    /// copy packets from bus to table
     pub fn run(&self, bus: MultiQueue<J1939Packet>) -> thread::JoinHandle<()> {
         let list = self.list.clone();
         thread::spawn(move || {
@@ -31,6 +40,7 @@ impl PacketModel {
         })
     }
 }
+
 impl SimpleModel for PacketModel {
     fn row_count(&mut self) -> usize {
         self.list.lock().unwrap().len()
@@ -59,8 +69,6 @@ impl SimpleModel for PacketModel {
 
 fn main() -> Result<(), anyhow::Error> {
     let bus: MultiQueue<J1939Packet> = MultiQueue::new();
-    // let mut rp1210 = ConnectionDescriptor::parse().connect(bus.clone())?;
-    // rp1210.run();
 
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
@@ -70,23 +78,54 @@ fn main() -> Result<(), anyhow::Error> {
         .with_size(400, 600)
         .with_label("J1939 Log");
 
-    let mut pack = Pack::default_fill();
-    pack.set_type(PackType::Vertical);
+    let pack = Pack::default_fill();
 
-    let mut menu = menu::SysMenuBar::default().with_size(20, 35);
+    // this needs to be right of the menu (you don't have to go home, But you can't stay here)
+    let mut connection_string = Input::default()
+        .with_label("Connection String")
+        .with_size(100, 32);
+    connection_string.set_value("J1939:Baud=auto");
+
+    let mut menu = SysMenuBar::default().with_size(100, 35);
+    {
+        let list = packet_model.list.clone();
+        menu.add(
+            "&Action/Save...\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_b| {
+                let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
+                fc.show();
+                let mut out = BufWriter::new(
+                    File::create(fc.filename()).expect("Failed to create log file."),
+                );
+                for p in list.lock().unwrap().iter() {
+                    out.write_all(p.to_string().as_bytes())
+                        .expect("Failed to write log file.");
+                    out.write_all(b"\r\n").expect("Failed to write log file.");
+                }
+            },
+        );
+    }
+    {
+        let list = packet_model.list.clone();
+        menu.add(
+            "&Action/Clear\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_b| {
+                list.lock().unwrap().clear();
+            },
+        );
+    }
+    add_rp1210_menu(
+        Box::new(move || connection_string.value()),
+        &mut menu,
+        bus.clone(),
+    )?;
+
     let list = packet_model.list.clone();
-    menu.add(
-        "&Action/Clear\t",
-        Shortcut::None,
-        menu::MenuFlag::Normal,
-        move |_b| {
-            list.lock().unwrap().clear();
-        },
-    );
-
-    add_rp1210_menu(&mut menu, bus.clone())?;
-
-    let table = Table::default();
+    let mut table = Table::default();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 12);
 
@@ -97,8 +136,12 @@ fn main() -> Result<(), anyhow::Error> {
     wind.show();
 
     // repaint the table on a schedule, to demonstrate updating models.
-    let timer = Timer::new(); // requires variable, so that it isn't dropped.
+    let timer = Timer::new();
     let _redraw_task = timer.schedule_repeating(chrono::Duration::milliseconds(200), move || {
+        let row = list.lock().unwrap().len() as i32;
+        if table.row_position() > (0.9 * (row as f64)) as i32 {
+            table.set_row_position(row);
+        }
         simple_table.redraw();
     });
 
@@ -108,26 +151,46 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn add_rp1210_menu(menu: &mut menu::SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
+fn add_rp1210_menu(
+    connection_string_fn: Box<dyn Fn() -> String>,
+    menu: &mut SysMenuBar,
+    bus: MultiQueue<J1939Packet>,
+) -> Result<(), Error> {
+    let adapter = Arc::new(RefCell::new(Option::None));
+
+    let connection_string_fn = Arc::new(connection_string_fn);
     for p in rp1210_parsing::list_all_products()? {
-        let product_description = p.description.clone();
-        for d in p.devices {
-            let name = format!("&{}/{} {}\t", &product_description, &d.name, &d.description);
-            let bus = bus.clone();
-            let dev_name = &d.name;
-            let device = d.id;
-            menu.add(
-                &dev_name,
-                Shortcut::None,
-                menu::MenuFlag::Normal,
-                move |_b| {
-                    Rp1210::new(&name, device, "J1939:Baud=Auto", 0xF9, bus.clone())
-                        .unwrap()
-                        .run();
-                },
+        let product_description = p.id.clone();
+        for device in p.devices {
+            let id = p.id.clone();
+            let name = format!(
+                "&RP1210/{}/{}: {}\t",
+                &product_description, &device.name, &device.description
             );
+            let bus = bus.clone();
+            let device_id = device.id;
+            let adapter = adapter.clone();
+            let cs_fn = connection_string_fn.clone();
+            menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
+                // unload old DLL
+                adapter.replace(None);
+                eprintln!("LOADING: {} {}", id, cs_fn());
+                // load new DLL
+                let mut rp1210 =
+                    Rp1210::new(id.as_str(), device_id, cs_fn().as_str(), 0xF9, bus.clone())
+                        .unwrap();
+                rp1210.run();
+                adapter.replace(Some(rp1210));
+            });
         }
     }
-    //todo!()
+    menu.add(
+        "&RP1210/Stop",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_b| {
+            adapter.replace(None);
+        },
+    );
     Ok(())
 }
