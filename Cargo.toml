@@ -17,3 +17,6 @@ anyhow = "^1"
 timer="0.2.0"
 chrono="0.4.22"
 rust-embed="6.4.2"
+
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
