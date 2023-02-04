@@ -1,5 +1,9 @@
 #![windows_subsystem = "windows"]
 
+#[derive(RustEmbed)]
+#[folder = "assets/"]
+struct Asset;
+
 use std::{
     cell::RefCell,
     fs::File,
@@ -16,13 +20,15 @@ use fltk::{
     dialog::{message_default, message_icon_label, FileDialog},
     enums::{self, Shortcut},
     group::Pack,
+    image::{self, PngImage},
     input::Input,
     menu::{self, SysMenuBar},
-    prelude::{GroupExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt},
+    prelude::{GroupExt, ImageExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt, WindowExt},
     table::Table,
     window::Window,
 };
 use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
+use rust_embed::{EmbeddedFile, RustEmbed};
 use simple_table::simple_table::{SimpleModel, SimpleTable};
 use timer::Timer;
 
@@ -138,6 +144,9 @@ fn main() -> Result<(), anyhow::Error> {
     pack.end();
     wind.end();
     wind.resizable(&wind);
+    wind.set_icon(Some(PngImage::from_data(
+        &Asset::get("cancancan.png").unwrap().data,
+    )?));
     wind.show();
 
     // repaint the table on a schedule, to demonstrate updating models.
