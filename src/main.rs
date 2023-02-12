@@ -1,11 +1,14 @@
 #![windows_subsystem = "windows"]
 
+mod dbc_table;
+
 #[derive(RustEmbed)]
 #[folder = "assets/"]
 struct Asset;
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     fs::File,
     io::{BufWriter, Write},
     option::Option,
@@ -15,9 +18,11 @@ use std::{
 };
 
 use anyhow::Error;
+use canparse::pgn::PgnLibrary;
+use dbc_table::DbcModel;
 use fltk::{
     app,
-    dialog::{message_default, message_icon_label, FileDialog},
+    dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
     enums::{self, Shortcut},
     group::Pack,
     image::PngImage,
@@ -35,16 +40,22 @@ use timer::Timer;
 /// simple table model to represent log
 #[derive(Default)]
 struct PacketModel {
-    pub list: Arc<Mutex<Vec<J1939Packet>>>,
+    pub list: Arc<Mutex<Vec<Arc<J1939Packet>>>>,
+    index: Arc<Mutex<HashMap<u32, Arc<J1939Packet>>>>,
 }
 
 impl PacketModel {
     /// copy packets from bus to table
     pub fn run(&self, bus: MultiQueue<J1939Packet>) -> thread::JoinHandle<()> {
         let list = self.list.clone();
+        let index = self.index.clone();
         thread::spawn(move || {
             bus.iter_for(Duration::from_secs(60 * 60 * 24 * 7))
-                .for_each(|p| list.lock().unwrap().push(p))
+                .for_each(|p| {
+                    let p = Arc::new(p);
+                    list.lock().unwrap().push(p.clone());
+                    index.lock().unwrap().insert(p.id(), p);
+                })
         })
     }
 }
@@ -88,59 +99,26 @@ fn main() -> Result<(), anyhow::Error> {
 
     let pack = Pack::default_fill();
 
-    // this needs to be right of the menu (you don't have to go home, But you can't stay here)
+    // // this needs to be right of the menu (you don't have to go home, But you can't stay here)
     let mut connection_string = Input::default()
         .with_label("Connection String")
         .with_size(100, 32);
     connection_string.set_value("J1939:Baud=auto");
 
-    let mut menu = SysMenuBar::default().with_size(100, 35);
-    {
-        let list = packet_model.list.clone();
-        menu.add(
-            "&Action/Save...\t",
-            Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_b| {
-                let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
-                fc.show();
-                if fc.filenames().is_empty() {
-                    return;
-                }
-                let mut out = BufWriter::new(
-                    File::create(fc.filename()).expect("Failed to create log file."),
-                );
-                for p in list.lock().unwrap().iter() {
-                    out.write_all(p.to_string().as_bytes())
-                        .expect("Failed to write log file.");
-                    out.write_all(b"\r\n").expect("Failed to write log file.");
-                }
-            },
-        );
-    }
-    {
-        let list = packet_model.list.clone();
-        menu.add(
-            "&Action/Clear\t",
-            Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_b| {
-                list.lock().unwrap().clear();
-            },
-        );
-    }
-    add_rp1210_menu(
-        Box::new(move || connection_string.value()),
-        &mut menu,
-        bus.clone(),
+    create_menu(
+        SysMenuBar::default().with_size(100, 35),
+        &packet_model,
+        connection_string,
+        bus,
     )?;
 
     let list = packet_model.list.clone();
-    let mut table = Table::default();
+
+    let mut table = Table::default_fill();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 12);
+    table.end();
 
-    pack.resizable(&table);
     pack.end();
     wind.end();
     wind.resizable(&wind);
@@ -163,6 +141,91 @@ fn main() -> Result<(), anyhow::Error> {
     app.run().unwrap();
 
     Ok(())
+}
+
+fn create_menu(
+    mut menu: SysMenuBar,
+    packet_model: &PacketModel,
+    connection_string: Input,
+    bus: MultiQueue<J1939Packet>,
+) -> Result<(), Error> {
+    let index = packet_model.index.clone();
+    menu.add(
+        "&Action/Load DBC...\t",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_b| {
+            // request file from user
+            let mut fc = FileDialog::new(BrowseMultiFile);
+            fc.show();
+            if fc.filenames().is_empty() {
+                return;
+            }
+            let filename = fc.filename();
+            let mut wind = Window::default()
+                .with_size(300, 300)
+                .with_label(filename.to_str().unwrap());
+
+            {
+                let index = index.clone();
+                let model = DbcModel::new(
+                    PgnLibrary::from_dbc_file(filename).unwrap(),
+                    Box::new(move |id| -> Option<Arc<J1939Packet>> {
+                        let map = index.lock().unwrap().get(&id).map(|a| a.clone());
+                        map
+                    }),
+                );
+                // allocation has a side effect in FLTK
+                SimpleTable::new(Table::default_fill(), Box::new(model));
+            };
+
+            wind.end();
+            wind.resizable(&wind);
+            wind.show();
+        },
+    );
+    {
+        let list = packet_model.list.clone();
+        menu.add(
+            "&Action/Save...\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_| -> () {
+                save_log(list.clone());
+            },
+        );
+    }
+    {
+        let list = packet_model.list.clone();
+        menu.add(
+            "&Action/Clear\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_| {
+                list.lock().unwrap().clear();
+            },
+        );
+    }
+    add_rp1210_menu(
+        Box::new(move || connection_string.value()),
+        &mut menu,
+        bus.clone(),
+    )?;
+    Ok(())
+}
+
+fn save_log(list: Arc<Mutex<Vec<Arc<J1939Packet>>>>) -> () {
+    let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
+    fc.show();
+    if fc.filenames().is_empty() {
+        return;
+    }
+    let mut out = BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
+    for p in list.lock().unwrap().iter() {
+        out.write_all(p.to_string().as_bytes())
+            .expect("Failed to write log file.");
+        out.write_all(b"\r\n").expect("Failed to write log file.");
+    }
 }
 
 fn add_rp1210_menu(
