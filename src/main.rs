@@ -12,7 +12,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     option::Option,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, RwLock},
     thread,
     time::Duration,
 };
@@ -40,8 +40,8 @@ use timer::Timer;
 /// simple table model to represent log
 #[derive(Default)]
 struct PacketModel {
-    pub list: Arc<Mutex<Vec<Arc<J1939Packet>>>>,
-    index: Arc<Mutex<HashMap<u32, Arc<J1939Packet>>>>,
+    pub list: Arc<RwLock<Vec<Arc<J1939Packet>>>>,
+    index: Arc<RwLock<HashMap<u32, Arc<J1939Packet>>>>,
 }
 
 impl PacketModel {
@@ -53,8 +53,8 @@ impl PacketModel {
             bus.iter_for(Duration::from_secs(60 * 60 * 24 * 7))
                 .for_each(|p| {
                     let p = Arc::new(p);
-                    list.lock().unwrap().push(p.clone());
-                    index.lock().unwrap().insert(p.id(), p);
+                    list.write().unwrap().push(p.clone());
+                    index.write().unwrap().insert(p.id(), p);
                 })
         })
     }
@@ -62,7 +62,7 @@ impl PacketModel {
 
 impl SimpleModel for PacketModel {
     fn row_count(&mut self) -> usize {
-        self.list.lock().unwrap().len()
+        self.list.read().unwrap().len()
     }
 
     fn column_count(&mut self) -> usize {
@@ -79,7 +79,7 @@ impl SimpleModel for PacketModel {
 
     fn cell(&mut self, row: i32, _col: i32) -> Option<String> {
         self.list
-            .lock()
+            .read()
             .unwrap()
             .get(row as usize)
             .map(|p| p.to_string())
@@ -87,6 +87,9 @@ impl SimpleModel for PacketModel {
 }
 
 fn main() -> Result<(), anyhow::Error> {
+    // repaint the table on a schedule, to demonstrate updating models.
+    let timer = Arc::new(Timer::new());
+
     let bus: MultiQueue<J1939Packet> = MultiQueue::new();
 
     let packet_model = PacketModel::default();
@@ -103,13 +106,14 @@ fn main() -> Result<(), anyhow::Error> {
     let mut connection_string = Input::default()
         .with_label("Connection String")
         .with_size(100, 32);
-    connection_string.set_value("J1939:Baud=auto");
+    connection_string.set_value("J1939:Channel=1;Baud=500");
 
     create_menu(
         SysMenuBar::default().with_size(100, 35),
         &packet_model,
         connection_string,
         bus,
+        timer.clone(),
     )?;
 
     let list = packet_model.list.clone();
@@ -127,15 +131,7 @@ fn main() -> Result<(), anyhow::Error> {
     )?));
     wind.show();
 
-    // repaint the table on a schedule, to demonstrate updating models.
-    let timer = Timer::new();
-    let _redraw_task = timer.schedule_repeating(chrono::Duration::milliseconds(200), move || {
-        let row = list.lock().unwrap().len() as i32;
-        if table.row_position() > (0.9 * (row as f64)) as i32 {
-            table.set_row_position(row);
-        }
-        simple_table.redraw();
-    });
+   // simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
 
     // run the app
     app.run().unwrap();
@@ -148,6 +144,7 @@ fn create_menu(
     packet_model: &PacketModel,
     connection_string: Input,
     bus: MultiQueue<J1939Packet>,
+    timer: Arc<Timer>,
 ) -> Result<(), Error> {
     let index = packet_model.index.clone();
     menu.add(
@@ -171,12 +168,13 @@ fn create_menu(
                 let model = DbcModel::new(
                     PgnLibrary::from_dbc_file(filename).unwrap(),
                     Box::new(move |id| -> Option<Arc<J1939Packet>> {
-                        let map = index.lock().unwrap().get(&id).map(|a| a.clone());
-                        map
+                        index.read().unwrap().get(&id).map(|a| a.clone())
                     }),
                 );
                 // allocation has a side effect in FLTK
-                SimpleTable::new(Table::default_fill(), Box::new(model));
+                let mut simple_table = SimpleTable::new(Table::default_fill(), Box::new(model));
+                eprintln!("configure redraw_on");
+                simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
             };
 
             wind.end();
@@ -197,12 +195,14 @@ fn create_menu(
     }
     {
         let list = packet_model.list.clone();
+        let index = packet_model.index.clone();
         menu.add(
             "&Action/Clear\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_| {
-                list.lock().unwrap().clear();
+                list.write().unwrap().clear();
+                index.write().unwrap().clear();
             },
         );
     }
@@ -214,14 +214,14 @@ fn create_menu(
     Ok(())
 }
 
-fn save_log(list: Arc<Mutex<Vec<Arc<J1939Packet>>>>) -> () {
+fn save_log(list: Arc<RwLock<Vec<Arc<J1939Packet>>>>) -> () {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if fc.filenames().is_empty() {
         return;
     }
     let mut out = BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
-    for p in list.lock().unwrap().iter() {
+    for p in list.read().unwrap().iter() {
         out.write_all(p.to_string().as_bytes())
             .expect("Failed to write log file.");
         out.write_all(b"\r\n").expect("Failed to write log file.");

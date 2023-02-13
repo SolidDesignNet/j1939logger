@@ -18,17 +18,14 @@ impl DbcModel {
             get_packet: get_packet_fn,
         }
     }
-    pub fn pgns(&self) -> Vec<&PgnDefinition> {
-        self.dbc.pgns.values().collect()
-    }
-    pub fn spns(&self) -> Vec<&SpnDefinition> {
+    fn spns(&self) -> Vec<&SpnDefinition> {
         self.dbc
             .pgns
             .values()
             .flat_map(|p| p.spns.values())
             .collect()
     }
-    pub fn pgns_spns(&self) -> Vec<(&PgnDefinition, &SpnDefinition)> {
+    fn pgns_spns(&self) -> Vec<(&PgnDefinition, &SpnDefinition)> {
         self.dbc
             .pgns
             .values()
@@ -42,13 +39,15 @@ impl SimpleModel for DbcModel {
     }
 
     fn column_count(&mut self) -> usize {
-        2
+        4
     }
 
     fn header(&mut self, col: usize) -> String {
         match col {
             0 => "name".into(),
-            1 => "value".into(),
+            1 => "id".into(),
+            2 => "value".into(),
+            3 => "packet".into(),
             _ => "Unknown".into(),
         }
     }
@@ -62,15 +61,20 @@ impl SimpleModel for DbcModel {
 
         match col {
             0 => Some(spn.name.clone().into()),
-            1 => Some(
-                (self.get_packet)(pgn.pgn_long).map_or("no packet".to_string(), |packet| {
+            1 => Some(format!("{:06X}", pgn.pgn_long)),
+            2 => Some((self.get_packet)(pgn.pgn_long & 0xFFFFFF).map_or(
+                "no packet".to_string(),
+                |packet| {
                     spn.parse_message(packet.data())
                         .map_or("unable to parse".to_string(), |value| {
-                            format!("{} {:.3}", value, "unit")
+                            format!("{} {:.3}", value, spn.units)
                         })
-                }),
+                },
+            )),
+            3 => Some(
+                (self.get_packet)(pgn.pgn_long & 0xFFFFFF)
+                    .map_or("no packet".to_string(), |p| p.to_string()),
             ),
-
             _ => None,
         }
     }
