@@ -12,7 +12,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     option::Option,
-    sync::{Arc, Mutex, RwLock},
+    sync::{Arc, RwLock},
     thread,
     time::Duration,
 };
@@ -28,13 +28,13 @@ use fltk::{
     image::PngImage,
     input::Input,
     menu::{self, SysMenuBar},
-    prelude::{GroupExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt, WindowExt},
+    prelude::{GroupExt, InputExt, MenuExt, WidgetBase, WidgetExt, WindowExt},
     table::Table,
     window::Window,
 };
 use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
 use rust_embed::RustEmbed;
-use simple_table::simple_table::{SimpleModel, SimpleTable};
+use simple_table::simple_table::{Order, SimpleModel, SimpleTable};
 use timer::Timer;
 
 /// simple table model to represent log
@@ -83,6 +83,10 @@ impl SimpleModel for PacketModel {
             .unwrap()
             .get(row as usize)
             .map(|p| p.to_string())
+    }
+
+    fn sort(&mut self, _col: usize, _order: Order) {
+        // sorting not supported
     }
 }
 
@@ -158,7 +162,7 @@ fn create_menu(
             }
             let filename = fc.filename();
             let mut wind = Window::default()
-                .with_size(300, 300)
+                .with_size(600, 300)
                 .with_label(filename.to_str().unwrap());
 
             let index = index.clone();
@@ -168,7 +172,7 @@ fn create_menu(
                     index.read().unwrap().get(&id).map(|a| a.clone())
                 }),
             );
-            
+
             // allocation has a side effect in FLTK
             SimpleTable::new(Table::default_fill(), Box::new(model))
                 .redraw_on(&timer, chrono::Duration::milliseconds(200));
