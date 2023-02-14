@@ -95,7 +95,7 @@ fn main() -> Result<(), anyhow::Error> {
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
 
-    let app = app::App::default();
+    let app = app::App::default().with_scheme(app::Scheme::Gtk);
     let mut wind = Window::default()
         .with_size(400, 600)
         .with_label(&format!("J1939 Log {}", &env!("CARGO_PKG_VERSION")));
@@ -116,9 +116,7 @@ fn main() -> Result<(), anyhow::Error> {
         timer.clone(),
     )?;
 
-    let list = packet_model.list.clone();
-
-    let mut table = Table::default_fill();
+    let table = Table::default_fill();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 12);
     table.end();
@@ -131,7 +129,7 @@ fn main() -> Result<(), anyhow::Error> {
     )?));
     wind.show();
 
-   // simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
+    simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
 
     // run the app
     app.run().unwrap();
@@ -163,19 +161,17 @@ fn create_menu(
                 .with_size(300, 300)
                 .with_label(filename.to_str().unwrap());
 
-            {
-                let index = index.clone();
-                let model = DbcModel::new(
-                    PgnLibrary::from_dbc_file(filename).unwrap(),
-                    Box::new(move |id| -> Option<Arc<J1939Packet>> {
-                        index.read().unwrap().get(&id).map(|a| a.clone())
-                    }),
-                );
-                // allocation has a side effect in FLTK
-                let mut simple_table = SimpleTable::new(Table::default_fill(), Box::new(model));
-                eprintln!("configure redraw_on");
-                simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
-            };
+            let index = index.clone();
+            let model = DbcModel::new(
+                PgnLibrary::from_dbc_file(filename).unwrap(),
+                Box::new(move |id| -> Option<Arc<J1939Packet>> {
+                    index.read().unwrap().get(&id).map(|a| a.clone())
+                }),
+            );
+            
+            // allocation has a side effect in FLTK
+            SimpleTable::new(Table::default_fill(), Box::new(model))
+                .redraw_on(&timer, chrono::Duration::milliseconds(200));
 
             wind.end();
             wind.resizable(&wind);
