@@ -22,9 +22,11 @@ use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
     app,
+    button::CheckButton,
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
     enums::{self, Shortcut},
-    group::Pack,
+    frame::Frame,
+    group::{Pack, PackType},
     image::PngImage,
     input::Input,
     menu::{self, SysMenuBar},
@@ -107,15 +109,41 @@ fn main() -> Result<(), anyhow::Error> {
     let pack = Pack::default_fill();
 
     // // this needs to be right of the menu (you don't have to go home, But you can't stay here)
-    let mut connection_string = Input::default()
-        .with_label("Connection String")
-        .with_size(100, 32);
-    connection_string.set_value("J1939:Channel=1;Baud=500");
+    let connection_string_fn = {
+        let mut connection_string = Input::default()
+            .with_label("Connection String")
+            .with_size(100, 32);
+        connection_string.set_value("J1939:Baud=500");
+        move || connection_string.value()
+    };
+
+    let channel_fn = {
+        let channel_pack = Pack::default()
+            .with_size(100, 32)
+            .with_type(PackType::Horizontal);
+        channel_pack.begin();
+        Frame::default().with_label("Channels").with_size(80, 32);
+        let check_buttons = [1, 2, 3].map(|c| {
+            CheckButton::default()
+                .with_label(c.to_string().as_str())
+                .with_size(32, 32)
+        });
+        check_buttons[0].set_checked(true);
+        channel_pack.end();
+        move || {
+            check_buttons
+                .iter()
+                .filter(|c| c.is_checked())
+                .map(|b| b.label().parse::<u8>().unwrap())
+                .collect()
+        }
+    };
 
     create_menu(
         SysMenuBar::default().with_size(100, 35),
         &packet_model,
-        connection_string,
+        connection_string_fn,
+        channel_fn,
         bus,
         timer.clone(),
     )?;
@@ -144,7 +172,8 @@ fn main() -> Result<(), anyhow::Error> {
 fn create_menu(
     mut menu: SysMenuBar,
     packet_model: &PacketModel,
-    connection_string: Input,
+    connection_string_fn: impl Fn() -> String + 'static,
+    channels_fn: impl Fn() -> Vec<u8> + 'static,
     bus: MultiQueue<J1939Packet>,
     timer: Arc<Timer>,
 ) -> Result<(), Error> {
@@ -206,11 +235,7 @@ fn create_menu(
             },
         );
     }
-    add_rp1210_menu(
-        Box::new(move || connection_string.value()),
-        &mut menu,
-        bus.clone(),
-    )?;
+    add_rp1210_menu(connection_string_fn, channels_fn, &mut menu, bus.clone())?;
     Ok(())
 }
 
@@ -229,13 +254,16 @@ fn save_log(list: Arc<RwLock<Vec<Arc<J1939Packet>>>>) -> () {
 }
 
 fn add_rp1210_menu(
-    connection_string_fn: Box<dyn Fn() -> String>,
+    connection_string_fn: impl Fn() -> String + 'static,
+    channels_fn: impl Fn() -> Vec<u8> + 'static,
     menu: &mut SysMenuBar,
     bus: MultiQueue<J1939Packet>,
 ) -> Result<(), Error> {
     let adapter = Arc::new(RefCell::new(Option::None));
 
     let connection_string_fn = Arc::new(connection_string_fn);
+    let channels_fn = Arc::new(channels_fn);
+
     for product in rp1210_parsing::list_all_products()? {
         for device in product.devices {
             let name = format!("&RP1210/{}/{}\t", &product.description, &device.description);
@@ -243,15 +271,32 @@ fn add_rp1210_menu(
             let bus = bus.clone();
             let device_id = device.id;
             let adapter = adapter.clone();
-            let cs_fn = connection_string_fn.clone();
+
+            let connection_string_fn = connection_string_fn.clone();
+            let channels_fn = channels_fn.clone();
+
             menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
                 // unload old DLL
                 adapter.replace(None);
-                eprintln!("LOADING: {} {}", id, cs_fn());
+                //eprintln!("LOADING: {} {}", id, cs_fn.clone()());
+
                 // load new DLL
-                match Rp1210::new(id.as_str(), device_id, cs_fn().as_str(), 0xF9, bus.clone()) {
+                match Rp1210::new(
+                    id.as_str(),
+                    device_id,
+                    connection_string_fn().as_str(),
+                    0xF9,
+                    bus.clone(),
+                ) {
                     Ok(mut rp1210) => {
-                        rp1210.run();
+                        let channels_fn = channels_fn();
+                        if channels_fn.is_empty() {
+                            rp1210.run(None);
+                        } else {
+                            for channel in channels_fn {
+                                rp1210.run(Some(channel));
+                            }
+                        }
                         adapter.replace(Some(rp1210));
                     }
                     Err(err) => {
