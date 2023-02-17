@@ -124,7 +124,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 12);
     table.end();
-
+    pack.resizable(&table);
     pack.end();
     wind.end();
     wind.resizable(&wind);
