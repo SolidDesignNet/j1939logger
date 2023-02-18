@@ -290,10 +290,14 @@ fn add_rp1210_menu(
                     Ok(mut rp1210) => {
                         let channels_fn = channels_fn();
                         if channels_fn.is_empty() {
-                            rp1210.run(None);
+                            rp1210
+                                .run(None)
+                                .expect("Failed to open adapter with default channel");
                         } else {
                             for channel in channels_fn {
-                                rp1210.run(Some(channel));
+                                rp1210
+                                    .run(Some(channel))
+                                    .expect(format!("Failed to open channel {}", channel).as_str());
                             }
                         }
                         adapter.replace(Some(rp1210));
