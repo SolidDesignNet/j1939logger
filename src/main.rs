@@ -42,8 +42,8 @@ use timer::Timer;
 /// simple table model to represent log
 #[derive(Default)]
 struct PacketModel {
-    pub list: Arc<RwLock<Vec<Arc<J1939Packet>>>>,
-    index: Arc<RwLock<HashMap<u32, Arc<J1939Packet>>>>,
+    pub list: Arc<RwLock<Vec<J1939Packet>>>,
+    index: Arc<RwLock<HashMap<u32, J1939Packet>>>,
 }
 
 impl PacketModel {
@@ -54,7 +54,6 @@ impl PacketModel {
         thread::spawn(move || {
             bus.iter_for(Duration::from_secs(60 * 60 * 24 * 7))
                 .for_each(|p| {
-                    let p = Arc::new(p);
                     list.write().unwrap().push(p.clone());
                     index.write().unwrap().insert(p.id(), p);
                 })
@@ -197,7 +196,7 @@ fn create_menu(
             let index = index.clone();
             let model = DbcModel::new(
                 PgnLibrary::from_dbc_file(filename).unwrap(),
-                Box::new(move |id| -> Option<Arc<J1939Packet>> {
+                Box::new(move |id| -> Option<J1939Packet> {
                     index.read().unwrap().get(&id).map(|a| a.clone())
                 }),
             );
@@ -239,7 +238,7 @@ fn create_menu(
     Ok(())
 }
 
-fn save_log(list: Arc<RwLock<Vec<Arc<J1939Packet>>>>) -> () {
+fn save_log(list: Arc<RwLock<Vec<J1939Packet>>>) -> () {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if fc.filenames().is_empty() {

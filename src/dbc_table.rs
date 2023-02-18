@@ -1,4 +1,4 @@
-use std::{collections::HashMap, mem::swap, sync::Arc};
+use std::{collections::HashMap, mem::swap};
 
 use canparse::pgn::{ParseMessage, PgnDefinition, PgnLibrary, SpnDefinition};
 use rp1210::packet::J1939Packet;
@@ -9,12 +9,12 @@ pub struct DbcModel {
     pgns: HashMap<u32, PgnDefinition>,
     spns: Vec<SpnDefinition>,
     spn_to_pgn: HashMap<String, u32>,
-    get_packet: Box<dyn Fn(u32) -> Option<Arc<J1939Packet>> + Send + Sync>,
+    get_packet: Box<dyn Fn(u32) -> Option<J1939Packet> + Send + Sync>,
 }
 impl DbcModel {
     pub(crate) fn new(
         dbc: PgnLibrary,
-        get_packet_fn: Box<dyn Fn(u32) -> Option<Arc<J1939Packet>> + Send + Sync>,
+        get_packet_fn: Box<dyn Fn(u32) -> Option<J1939Packet> + Send + Sync>,
     ) -> DbcModel {
         let pgns = dbc.pgns;
         let spns = pgns
@@ -49,7 +49,7 @@ impl DbcModel {
         (self.get_packet)(pgn.id & 0x3FFFFFF).map_or("no packet".to_string(), |packet| {
             spn.parse_message(packet.data())
                 .map_or("unable to parse".to_string(), |value| {
-                    format!("{} {:.3}", value, spn.units)
+                    format!("{:0.3} {}", value, spn.units)
                 })
         })
     }
