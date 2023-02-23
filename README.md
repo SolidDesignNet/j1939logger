@@ -1,5 +1,5 @@
 Simple FLTK RP1210 based J1939 CAN logger.
 
-I plan on merging a J1939DA loading, faults, and signal display.  Then I plan on adding DBC loading.
+J1939 CAN logs and DBC display for RP1210 devices using multiple channels.
 
-![image](https://user-images.githubusercontent.com/1972001/216790940-2f8741bf-7afa-49b3-a6da-7be43ed70838.png)
+![image](https://user-images.githubusercontent.com/1972001/219876428-ad0bf8d0-f0bd-449b-bddb-5c3f60475918.png)
