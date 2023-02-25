@@ -177,6 +177,7 @@ fn create_menu(
     timer: Arc<Timer>,
 ) -> Result<(), Error> {
     let index = packet_model.index.clone();
+    let list = packet_model.list.clone();
     menu.add(
         "&Action/Load DBC...\t",
         Shortcut::None,
@@ -194,10 +195,22 @@ fn create_menu(
                 .with_label(filename.to_str().unwrap());
 
             let index = index.clone();
+            let list = list.clone();
+            // cache old values for get_packets_fn FIXME
+            // let cache = Arc::new(Mutex::new(HashMap::new()));
             let model = DbcModel::new(
                 PgnLibrary::from_dbc_file(filename).unwrap(),
                 Box::new(move |id| -> Option<J1939Packet> {
                     index.read().unwrap().get(&id).map(|a| a.clone())
+                }),
+                Box::new(move |id| -> Vec<J1939Packet> {
+                    list.write()
+                        .unwrap()
+                        .iter()
+                        .rev()
+                        .filter(|p| p.id() == id)
+                        .cloned()
+                        .collect()
                 }),
             );
 
