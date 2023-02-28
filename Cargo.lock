@@ -746,6 +746,7 @@ dependencies = [
 [[package]]
 name = "simple_table"
 version = "0.1.6"
+source = "git+https://github.com/SolidDesignNet/simple_table#8a3419d3b161a88638e37b38bb756ac3cb05ca06"
 dependencies = [
  "chrono",
  "fltk",
