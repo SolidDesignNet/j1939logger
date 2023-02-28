@@ -1,22 +1,23 @@
-use std::mem::swap;
+use std::{
+    collections::{HashMap, VecDeque},
+    mem::swap,
+    sync::{Arc, RwLock},
+};
 
 use canparse::pgn::{ParseMessage, PgnDefinition, PgnLibrary, SpnDefinition};
 use rp1210::packet::J1939Packet;
-use simple_table::simple_table::{Order, SimpleModel, SparkLine};
+use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
 pub struct DbcModel {
     pgns: Vec<PgnDefinition>,
     // pgn index in pgns, spn index in pgn
     rows: Vec<(usize, usize)>,
-    get_packet: Box<dyn Fn(u32) -> Option<J1939Packet> + Send + Sync>,
-    get_packets: Box<dyn Fn(u32) -> Vec<J1939Packet> + Send + Sync>,
+    packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
 }
-
 impl DbcModel {
     pub fn new(
         dbc: PgnLibrary,
-        get_packet_fn: Box<dyn Fn(u32) -> Option<J1939Packet> + Send + Sync>,
-        get_packets_fn: Box<dyn Fn(u32) -> Vec<J1939Packet> + Send + Sync>,
+        packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
     ) -> DbcModel {
         let pgns: Vec<PgnDefinition> = dbc.pgns.values().cloned().collect();
         let mut rows = Vec::new();
@@ -34,24 +35,25 @@ impl DbcModel {
         DbcModel {
             pgns,
             rows,
-            get_packet: get_packet_fn,
-            get_packets: get_packets_fn,
+            packets,
         }
     }
 
     fn spn_value(&self, row: Row) -> String {
         // ignore pritority?
-        (self.get_packet)(row.pgn.id & 0x3FFFFFF).map_or("no packet".to_string(), |packet| {
-            row.decode(&packet)
-                .map_or("unable to parse".to_string(), |value| {
-                    format!("{:0.3} {}", value, row.spn.units)
-                })
-        })
+        self.last_packet(row.pgn.id & 0x3FFFFFF)
+            .map_or("no packet".to_string(), |packet| {
+                row.decode(&packet)
+                    .map_or("unable to parse".to_string(), |value| {
+                        format!("{:0.3} {}", value, row.spn.units)
+                    })
+            })
     }
 
     fn packet_string(&self, pgn: &PgnDefinition) -> String {
         // ignore priority?
-        (self.get_packet)(pgn.id & 0x3FFFFFF).map_or("no packet".to_string(), |p| p.to_string())
+        self.last_packet(pgn.id & 0x3FFFFFF)
+            .map_or("no packet".to_string(), |p| p.to_string())
     }
 
     fn lookup_row(&self, index: &(usize, usize)) -> Row {
@@ -61,6 +63,15 @@ impl DbcModel {
             pgn,
             spn: spns[index.1],
         }
+    }
+
+    fn last_packet(&self, id: u32) -> Option<J1939Packet> {
+        self.packets
+            .read()
+            .unwrap()
+            .get(&id)
+            .and_then(|v| v.back())
+            .cloned()
     }
 }
 
@@ -104,6 +115,22 @@ impl SimpleModel for DbcModel {
         }
     }
 
+    fn cell_delegate(&mut self, row: i32, col: i32) -> Option<Box<dyn DrawDelegate>> {
+        match col {
+            5 => {
+                let row = self.lookup_row(&self.rows[row as usize]);
+                let id = row.pgn.id & 0x3FFFFFF;
+                self.packets
+                    .read()
+                    .unwrap()
+                    .get(&id)
+                    .map(|v| v.iter().map(|p| row.decode(p).unwrap_or(0.0)).collect())
+                    .map(|data: Vec<f64>| Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
+            }
+            _ => None,
+        }
+    }
+
     fn sort(&mut self, col: usize, order: Order) {
         if let Order::None = order {
             return;
@@ -127,30 +154,13 @@ impl SimpleModel for DbcModel {
         });
         swap(&mut list, &mut self.rows);
     }
-
-    fn cell_delegate(
-        &mut self,
-        row: i32,
-        col: i32,
-    ) -> Option<Box<dyn simple_table::simple_table::DrawDelegate>> {
-        if col == 5 {
-            let row = self.lookup_row(&self.rows[row as usize]);
-            let data = (self.get_packets)(row.pgn.id)
-                .iter()
-                .map(|p| row.decode(p).unwrap_or(0.0))
-                .collect();
-            Some(Box::new(SparkLine::new(data)))
-        } else {
-            None
-        }
-    }
 }
 struct Row<'a> {
     spn: &'a SpnDefinition,
     pgn: &'a PgnDefinition,
 }
 impl Row<'_> {
-    fn decode(&self, packet: &J1939Packet) -> Option<f32> {
-        self.spn.parse_message(packet.data())
+    fn decode(&self, packet: &J1939Packet) -> Option<f64> {
+        self.spn.parse_message(packet.data()).map(|v|v as f64)
     }
 }

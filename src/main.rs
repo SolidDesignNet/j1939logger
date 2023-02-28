@@ -8,13 +8,13 @@ struct Asset;
 
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fs::File,
     io::{BufWriter, Write},
     option::Option,
     sync::{Arc, RwLock},
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Error;
@@ -24,7 +24,7 @@ use fltk::{
     app,
     button::CheckButton,
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
-    enums::{self, Shortcut},
+    enums::{self, Mode, Shortcut},
     frame::Frame,
     group::{Pack, PackType},
     image::PngImage,
@@ -40,22 +40,41 @@ use simple_table::simple_table::{Order, SimpleModel, SimpleTable};
 use timer::Timer;
 
 /// simple table model to represent log
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct PacketModel {
     pub list: Arc<RwLock<Vec<J1939Packet>>>,
-    index: Arc<RwLock<HashMap<u32, J1939Packet>>>,
+    table: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
 }
 
 impl PacketModel {
     /// copy packets from bus to table
     pub fn run(&self, bus: MultiQueue<J1939Packet>) -> thread::JoinHandle<()> {
         let list = self.list.clone();
-        let index = self.index.clone();
+        let table = self.table.clone();
+        let mut last_trim = Instant::now();
         thread::spawn(move || {
             bus.iter_for(Duration::from_secs(60 * 60 * 24 * 7))
                 .for_each(|p| {
+                    let start = p.time() - 15.0; // 15 s
                     list.write().unwrap().push(p.clone());
-                    index.write().unwrap().insert(p.id(), p);
+                    let mut hash_map = table.write().unwrap();
+                    if let Some(v) = hash_map.get_mut(&p.id()) {
+                        v.push_back(p);
+                    } else {
+                        let id = p.id();
+                        let mut vd = VecDeque::new();
+                        vd.push_back(p);
+                        hash_map.insert(id, vd);
+                    }
+                    // clean up every 200 ms
+                    if last_trim.elapsed() > Duration::from_millis(200) {
+                        hash_map.values_mut().for_each(|v| {
+                            while v.front().map_or(false, |p| p.time() < start) {
+                                v.pop_front();
+                            }
+                        });
+                        last_trim = Instant::now();
+                    }
                 })
         })
     }
@@ -101,6 +120,9 @@ fn main() -> Result<(), anyhow::Error> {
     packet_model.run(bus.clone());
 
     let app = app::App::default().with_scheme(app::Scheme::Gtk);
+    app.load_system_fonts();
+    app.set_visual(Mode::MultiSample|Mode::Alpha)?;
+
     let mut wind = Window::default()
         .with_size(400, 600)
         .with_label(&format!("J1939 Log {}", &env!("CARGO_PKG_VERSION")));
@@ -153,6 +175,7 @@ fn main() -> Result<(), anyhow::Error> {
     table.end();
     pack.resizable(&table);
     pack.end();
+
     wind.end();
     wind.resizable(&wind);
     wind.set_icon(Some(PngImage::from_data(
@@ -176,8 +199,7 @@ fn create_menu(
     bus: MultiQueue<J1939Packet>,
     timer: Arc<Timer>,
 ) -> Result<(), Error> {
-    let index = packet_model.index.clone();
-    let list = packet_model.list.clone();
+    let table = packet_model.table.clone();
     menu.add(
         "&Action/Load DBC...\t",
         Shortcut::None,
@@ -194,25 +216,7 @@ fn create_menu(
                 .with_size(600, 300)
                 .with_label(filename.to_str().unwrap());
 
-            let index = index.clone();
-            let list = list.clone();
-            // cache old values for get_packets_fn FIXME
-            // let cache = Arc::new(Mutex::new(HashMap::new()));
-            let model = DbcModel::new(
-                PgnLibrary::from_dbc_file(filename).unwrap(),
-                Box::new(move |id| -> Option<J1939Packet> {
-                    index.read().unwrap().get(&id).map(|a| a.clone())
-                }),
-                Box::new(move |id| -> Vec<J1939Packet> {
-                    list.write()
-                        .unwrap()
-                        .iter()
-                        .rev()
-                        .filter(|p| p.id() == id)
-                        .cloned()
-                        .collect()
-                }),
-            );
+            let model = DbcModel::new(PgnLibrary::from_dbc_file(filename).unwrap(), table.clone());
 
             // allocation has a side effect in FLTK
             SimpleTable::new(Table::default_fill(), Box::new(model))
@@ -229,22 +233,16 @@ fn create_menu(
             "&Action/Save...\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
-            move |_| -> () {
-                save_log(list.clone());
-            },
+            move |_| -> () { save_log(list.clone()) },
         );
     }
     {
         let list = packet_model.list.clone();
-        let index = packet_model.index.clone();
         menu.add(
             "&Action/Clear\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
-            move |_| {
-                list.write().unwrap().clear();
-                index.write().unwrap().clear();
-            },
+            move |_| list.write().unwrap().clear(),
         );
     }
     add_rp1210_menu(connection_string_fn, channels_fn, &mut menu, bus.clone())?;
