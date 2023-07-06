@@ -26,7 +26,6 @@ impl DbcModel {
     pub fn remove_missing(self: &mut Self) {
         let lock = self.packets.read();
         if let Ok(map) = lock {
-            println!("map: {:?}", map.keys());
             self.rows = self
                 .rows
                 .iter()
@@ -40,8 +39,12 @@ impl DbcModel {
                 })
                 .cloned()
                 .collect();
-        } else {
-            println!("Failed to lock");
+        }
+    }
+    pub fn restore_missing(self: &mut Self) {
+        let lock = self.packets.read();
+        if let Ok(map) = lock {
+            self.rows = calc_rows(&self.pgns);
         }
     }
 
@@ -101,6 +104,16 @@ pub fn new_with_pgns(
     pgns: Vec<PgnDefinition>,
     packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
 ) -> DbcModel {
+    let rows = calc_rows(&pgns);
+
+    DbcModel {
+        pgns,
+        rows,
+        packets,
+    }
+}
+
+fn calc_rows(pgns: &Vec<PgnDefinition>) -> Vec<(usize, usize)> {
     let mut rows = Vec::new();
 
     let mut p = 0;
@@ -112,12 +125,7 @@ pub fn new_with_pgns(
         }
         p = p + 1;
     }
-
-    DbcModel {
-        pgns,
-        rows,
-        packets,
-    }
+    rows
 }
 
 impl SimpleModel for DbcModel {
@@ -136,10 +144,10 @@ impl SimpleModel for DbcModel {
     fn column_width(&mut self, col: usize) -> u32 {
         match col {
             0 => 0,
-            1 => 80,
+            1 => 40,
             2 => 40,
-            3 => 200,
-            4 => 80,
+            3 => 300,
+            4 => 160,
             5 => 120,
             6 => 400,
             _ => 80,

@@ -222,9 +222,6 @@ fn create_menu(
             let hpack = Pack::default_fill()
                 .with_size(600, 20)
                 .with_type(PackType::Horizontal);
-            let mut hide_mising_button = CheckButton::default()
-                .with_label("hide missing")
-                .with_size(150, 20);
             let from_addr = Input::default()
                 //.with_type(InputType::Int)
                 .with_label("From")
@@ -234,6 +231,9 @@ fn create_menu(
                 .with_label("To")
                 .with_size(100, 20);
             let mut map_addr = Button::default().with_label("Map Addr").with_size(100, 20);
+            let mut hide_mising_button = CheckButton::default()
+                .with_label("hide missing")
+                .with_size(150, 20);
             hpack.resizable(&from_addr);
             hpack.resizable(&to_addr);
             hpack.end();
@@ -250,17 +250,20 @@ fn create_menu(
 
             let model = table.model.clone();
             let model2 = table.model.clone();
-            hide_mising_button.set_callback(move |_| {
-                println!("hiding rows {}", model.lock().unwrap().row_count());
-                model.lock().unwrap().remove_missing();
+            hide_mising_button.set_callback(move |b| {
+                {
+                    let mut m = model.lock().unwrap();
+                    if b.is_checked() {
+                        m.remove_missing();
+                    } else {
+                        m.restore_missing();
+                    }
+                }
                 table.redraw();
-                println!("   hid rows {}", model.lock().unwrap().row_count());
             });
             map_addr.set_callback(move |_| {
-                println!("map");
-                let from = u8::from_str_radix(&from_addr.value(),16);
-                let to = u8::from_str_radix(&to_addr.value(),16);
-                println!("maping from {:?} to {:?}", from, to);
+                let from = u8::from_str_radix(&from_addr.value(), 16);
+                let to = u8::from_str_radix(&to_addr.value(), 16);
                 if from.is_ok() && to.is_ok() {
                     model2
                         .lock()
