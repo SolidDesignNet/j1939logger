@@ -3,8 +3,6 @@ name = "j1939logger"
 version = "0.1.2"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 simple_table= { version = "0.1.5", git = "https://github.com/SolidDesignNet/simple_table" }
 #simple_table= { version = "0.1.5", path = "../simple_table" }
@@ -12,16 +10,16 @@ rp1210= {version="0.1.2", git = "https://github.com/SolidDesignNet/rp1210-rs" }
 #rp1210= { path = "../rp1210-rs" }
 
 # remove bundled for win32 
-fltk = {version="1.3.30"}#,features = ["fltk-bundled"]}
+fltk = {version="1.3.13"}#,features = ["fltk-bundled"]}
 
-clap = { version = "4.0.32", features = ["derive"] }
+clap = { version = "3.2.17", features = ["derive"] }
 anyhow = "^1"
 timer="0.2.0"
 chrono="0.4.22"
 rust-embed="6.4.2"
 
-canparse = {version="0.1.4" , git="https://github.com/battjt/canparse.git"}
-#canparse = {version="0.1.4" , path="../canparse"}
+canparse = {version="0.1.5" , git="https://github.com/battjt/canparse.git"}
+#canparse = {version="0.1.6" , path="../canparse"}
 
 [target.'cfg(windows)'.build-dependencies]
 winres = "0.1"

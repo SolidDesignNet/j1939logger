@@ -8,6 +8,7 @@ use canparse::pgn::{ParseMessage, PgnDefinition, PgnLibrary, SpnDefinition};
 use rp1210::packet::J1939Packet;
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
+#[derive(Debug, Clone)]
 pub struct DbcModel {
     pgns: Vec<PgnDefinition>,
     // pgn index in pgns, spn index in pgn
@@ -19,23 +20,28 @@ impl DbcModel {
         dbc: PgnLibrary,
         packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
     ) -> DbcModel {
-        let pgns: Vec<PgnDefinition> = dbc.pgns.values().cloned().collect();
-        let mut rows = Vec::new();
+        new_with_pgns(dbc.pgns.values().cloned().collect(), packets)
+    }
 
-        let mut p = 0;
-        while p < pgns.len() {
-            let mut s = 0;
-            while s < pgns[p].spns.len() {
-                rows.push((p, s));
-                s = s + 1;
-            }
-            p = p + 1;
-        }
-
-        DbcModel {
-            pgns,
-            rows,
-            packets,
+    pub fn remove_missing(self: &mut Self) {
+        let lock = self.packets.read();
+        if let Ok(map) = lock {
+            println!("map: {:?}", map.keys());
+            self.rows = self
+                .rows
+                .iter()
+                .filter(|(i, _)| {
+                    let def = self.pgns.get(*i);
+                    if let Some(pd) = def {
+                        map.contains_key(&(0xFFFF_FF & pd.id))
+                    } else {
+                        false
+                    }
+                })
+                .cloned()
+                .collect();
+        } else {
+            println!("Failed to lock");
         }
     }
 
@@ -72,6 +78,45 @@ impl DbcModel {
             .get(&id)
             .and_then(|v| v.back())
             .cloned()
+    }
+    pub fn map_address(&mut self, from: u8, to: u8) {
+        let f = from as u32;
+        let t = to as u32;
+        self.pgns = self
+            .pgns
+            .iter()
+            .map(|pgn_def| {
+                let k = pgn_def.id;
+                let mut pgn_definition = pgn_def.clone();
+                if (0xFF & k) == f {
+                    pgn_definition.id = 0xFFFFFF00 & k | t;
+                }
+                pgn_definition
+            })
+            .collect();
+    }
+}
+
+pub fn new_with_pgns(
+    pgns: Vec<PgnDefinition>,
+    packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
+) -> DbcModel {
+    let mut rows = Vec::new();
+
+    let mut p = 0;
+    while p < pgns.len() {
+        let mut s = 0;
+        while s < pgns[p].spns.len() {
+            rows.push((p, s));
+            s = s + 1;
+        }
+        p = p + 1;
+    }
+
+    DbcModel {
+        pgns,
+        rows,
+        packets,
     }
 }
 
@@ -161,6 +206,6 @@ struct Row<'a> {
 }
 impl Row<'_> {
     fn decode(&self, packet: &J1939Packet) -> Option<f64> {
-        self.spn.parse_message(packet.data()).map(|v|v as f64)
+        self.spn.parse_message(packet.data()).map(|v| v as f64)
     }
 }

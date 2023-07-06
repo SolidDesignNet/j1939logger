@@ -22,7 +22,7 @@ use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
     app,
-    button::CheckButton,
+    button::{Button, CheckButton},
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
     enums::{self, Mode, Shortcut},
     frame::Frame,
@@ -119,9 +119,8 @@ fn main() -> Result<(), anyhow::Error> {
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
 
-    let app = app::App::default().with_scheme(app::Scheme::Gtk);
-    app.load_system_fonts();
-    app.set_visual(Mode::MultiSample|Mode::Alpha)?;
+    let app = app::App::default().with_scheme(app::Scheme::Oxy);
+    app.set_visual(Mode::MultiSample | Mode::Alpha)?;
 
     let mut wind = Window::default()
         .with_size(400, 600)
@@ -171,7 +170,7 @@ fn main() -> Result<(), anyhow::Error> {
 
     let table = Table::default_fill();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
-    simple_table.set_font(enums::Font::Screen, 12);
+    simple_table.set_font(enums::Font::Screen, 18);
     table.end();
     pack.resizable(&table);
     pack.end();
@@ -211,17 +210,64 @@ fn create_menu(
             if fc.filenames().is_empty() {
                 return;
             }
+
             let filename = fc.filename();
+            let lib = PgnLibrary::from_dbc_file(filename.clone()).unwrap();
             let mut wind = Window::default()
                 .with_size(600, 300)
                 .with_label(filename.to_str().unwrap());
 
-            let model = DbcModel::new(PgnLibrary::from_dbc_file(filename).unwrap(), table.clone());
+            let pack = Pack::default_fill();
+
+            let hpack = Pack::default_fill()
+                .with_size(600, 20)
+                .with_type(PackType::Horizontal);
+            let mut hide_mising_button = CheckButton::default()
+                .with_label("hide missing")
+                .with_size(150, 20);
+            let from_addr = Input::default()
+                //.with_type(InputType::Int)
+                .with_label("From")
+                .with_size(100, 20);
+            let to_addr = Input::default()
+                //.with_type(InputType::Int)
+                .with_label("To")
+                .with_size(100, 20);
+            let mut map_addr = Button::default().with_label("Map Addr").with_size(100, 20);
+            hpack.resizable(&from_addr);
+            hpack.resizable(&to_addr);
+            hpack.end();
 
             // allocation has a side effect in FLTK
-            SimpleTable::new(Table::default_fill(), Box::new(model))
-                .redraw_on(&timer, chrono::Duration::milliseconds(200));
+            let model = DbcModel::new(lib, table.clone());
+            let mut table = SimpleTable::new(Table::default_fill(), Box::new(model));
+            table.table.end();
 
+            pack.resizable(&table.table);
+            pack.end();
+
+            table.redraw_on(&timer, chrono::Duration::milliseconds(200));
+
+            let model = table.model.clone();
+            let model2 = table.model.clone();
+            hide_mising_button.set_callback(move |_| {
+                println!("hiding rows {}", model.lock().unwrap().row_count());
+                model.lock().unwrap().remove_missing();
+                table.redraw();
+                println!("   hid rows {}", model.lock().unwrap().row_count());
+            });
+            map_addr.set_callback(move |_| {
+                println!("map");
+                let from = u8::from_str_radix(&from_addr.value(),16);
+                let to = u8::from_str_radix(&to_addr.value(),16);
+                println!("maping from {:?} to {:?}", from, to);
+                if from.is_ok() && to.is_ok() {
+                    model2
+                        .lock()
+                        .unwrap()
+                        .map_address(from.unwrap(), to.unwrap());
+                }
+            });
             wind.end();
             wind.resizable(&wind);
             wind.show();
@@ -262,7 +308,6 @@ fn save_log(list: Arc<RwLock<Vec<J1939Packet>>>) -> () {
         out.write_all(b"\r\n").expect("Failed to write log file.");
     }
 }
-
 fn add_rp1210_menu(
     connection_string_fn: impl Fn() -> String + 'static,
     channels_fn: impl Fn() -> Vec<u8> + 'static,
