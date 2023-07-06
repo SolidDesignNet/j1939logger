@@ -42,10 +42,7 @@ impl DbcModel {
         }
     }
     pub fn restore_missing(self: &mut Self) {
-        let lock = self.packets.read();
-        if let Ok(map) = lock {
             self.rows = calc_rows(&self.pgns);
-        }
     }
 
     fn spn_value(&self, row: Row) -> String {
