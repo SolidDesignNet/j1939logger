@@ -12,7 +12,7 @@ use std::{
     fs::File,
     io::{BufWriter, Write},
     option::Option,
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
     thread,
     time::{Duration, Instant},
 };
@@ -22,14 +22,14 @@ use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
     app,
-    button::{Button, CheckButton},
+    button::Button,
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
     enums::{self, Mode, Shortcut},
     frame::Frame,
-    group::{Pack, PackType},
+    group::{Flex, Pack, PackType},
     image::PngImage,
     input::Input,
-    menu::{self, SysMenuBar},
+    menu::{self, MenuFlag, SysMenuBar},
     prelude::{GroupExt, InputExt, MenuExt, WidgetBase, WidgetExt, WindowExt},
     table::Table,
     window::Window,
@@ -119,54 +119,45 @@ fn main() -> Result<(), anyhow::Error> {
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
 
-    let app = app::App::default().with_scheme(app::Scheme::Oxy);
+    let app = app::App::default().with_scheme(app::Scheme::Plastic);
     app.set_visual(Mode::MultiSample | Mode::Alpha)?;
-
+ 
     let mut wind = Window::default()
         .with_size(400, 600)
         .with_label(&format!("J1939 Log {}", &env!("CARGO_PKG_VERSION")));
 
     let pack = Pack::default_fill();
 
-    // // this needs to be right of the menu (you don't have to go home, But you can't stay here)
-    let connection_string_fn = {
-        let mut connection_string = Input::default()
-            .with_label("Connection String")
-            .with_size(100, 32);
-        connection_string.set_value("J1939:Baud=500");
-        move || connection_string.value()
-    };
+    let mut menu = SysMenuBar::default().with_size(100, 35);
+    let pm2 = &packet_model;
+    let timer2 = timer.clone();
+    let table = pm2.table.clone();
+    menu.add(
+        "&Action/@fileopen Load DBC...\t",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_b| load_dbc_window(&table, &timer2),
+    );
+    {
+        let list = pm2.list.clone();
+        menu.add(
+            "&Action/@filesave Save...\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_| -> () { save_log(&list) },
+        );
+    }
+    {
+        let list = pm2.list.clone();
+        menu.add(
+            "&Action/@refresh Clear\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_| list.write().unwrap().clear(),
+        );
+    }
 
-    let channel_fn = {
-        let channel_pack = Pack::default()
-            .with_size(100, 32)
-            .with_type(PackType::Horizontal);
-        channel_pack.begin();
-        Frame::default().with_label("Channels").with_size(80, 32);
-        let check_buttons = [1, 2, 3].map(|c| {
-            CheckButton::default()
-                .with_label(c.to_string().as_str())
-                .with_size(32, 32)
-        });
-        check_buttons[0].set_checked(true);
-        channel_pack.end();
-        move || {
-            check_buttons
-                .iter()
-                .filter(|c| c.is_checked())
-                .map(|b| b.label().parse::<u8>().unwrap())
-                .collect()
-        }
-    };
-
-    create_menu(
-        SysMenuBar::default().with_size(100, 35),
-        &packet_model,
-        connection_string_fn,
-        channel_fn,
-        bus,
-        timer.clone(),
-    )?;
+    add_rp1210_menu(&mut menu, bus.clone())?;
 
     let table = Table::default_fill();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
@@ -190,115 +181,104 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn create_menu(
-    mut menu: SysMenuBar,
-    packet_model: &PacketModel,
-    connection_string_fn: impl Fn() -> String + 'static,
-    channels_fn: impl Fn() -> Vec<u8> + 'static,
-    bus: MultiQueue<J1939Packet>,
-    timer: Arc<Timer>,
-) -> Result<(), Error> {
-    let table = packet_model.table.clone();
-    menu.add(
-        "&Action/Load DBC...\t",
-        Shortcut::None,
-        menu::MenuFlag::Normal,
-        move |_b| {
-            // request file from user
-            let mut fc = FileDialog::new(BrowseMultiFile);
-            fc.show();
-            if fc.filenames().is_empty() {
-                return;
-            }
-
-            let filename = fc.filename();
-            let lib = PgnLibrary::from_dbc_file(filename.clone()).unwrap();
-            let mut wind = Window::default()
-                .with_size(600, 300)
-                .with_label(filename.to_str().unwrap());
-
-            let pack = Pack::default_fill();
-
-            let hpack = Pack::default_fill()
-                .with_size(600, 20)
-                .with_type(PackType::Horizontal);
-            let from_addr = Input::default()
-                //.with_type(InputType::Int)
-                .with_label("From")
-                .with_size(100, 20);
-            let to_addr = Input::default()
-                //.with_type(InputType::Int)
-                .with_label("To")
-                .with_size(100, 20);
-            let mut map_addr = Button::default().with_label("Map Addr").with_size(100, 20);
-            let mut hide_mising_button = CheckButton::default()
-                .with_label("hide missing")
-                .with_size(150, 20);
-            hpack.resizable(&from_addr);
-            hpack.resizable(&to_addr);
-            hpack.end();
-
-            // allocation has a side effect in FLTK
-            let model = DbcModel::new(lib, table.clone());
-            let mut table = SimpleTable::new(Table::default_fill(), Box::new(model));
-            table.table.end();
-
-            pack.resizable(&table.table);
-            pack.end();
-
-            table.redraw_on(&timer, chrono::Duration::milliseconds(200));
-
-            let model = table.model.clone();
-            let model2 = table.model.clone();
-            hide_mising_button.set_callback(move |b| {
-                {
-                    let mut m = model.lock().unwrap();
-                    if b.is_checked() {
-                        m.remove_missing();
-                    } else {
-                        m.restore_missing();
-                    }
-                }
-                table.redraw();
-            });
-            map_addr.set_callback(move |_| {
-                let from = u8::from_str_radix(&from_addr.value(), 16);
-                let to = u8::from_str_radix(&to_addr.value(), 16);
-                if from.is_ok() && to.is_ok() {
-                    model2
-                        .lock()
-                        .unwrap()
-                        .map_address(from.unwrap(), to.unwrap());
-                }
-            });
-            wind.end();
-            wind.resizable(&wind);
-            wind.show();
-        },
+fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, timer: &Arc<Timer>) {
+    let mut fc = FileDialog::new(BrowseMultiFile);
+    fc.show();
+    if fc.filenames().is_empty() {
+        return;
+    }
+    let filename = fc.filename();
+    let model = DbcModel::new(
+        PgnLibrary::from_dbc_file(filename.clone()).unwrap(),
+        table.clone(),
     );
+
+    let mut wind = Window::default()
+        .with_size(600, 300)
+        .with_label(filename.to_str().unwrap());
+
+    let pack = Pack::default_fill();
+
+    let mut menu = SysMenuBar::default().with_size(100, 35);
+    let mut table = SimpleTable::new(Table::default_fill(), Box::new(model));
+    table.table.end();
+
+    pack.resizable(&table.table);
+    pack.end();
+    table.redraw_on(&timer, chrono::Duration::milliseconds(200));
+
+    let table = Arc::new(Mutex::new(table));
     {
-        let list = packet_model.list.clone();
+        let table = table.clone();
         menu.add(
-            "&Action/Save...\t",
+            "Action/Map Address...",
             Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_| -> () { save_log(list.clone()) },
+            MenuFlag::Normal,
+            move |_| {
+                map_address_wizard(&table);
+            },
         );
     }
     {
-        let list = packet_model.list.clone();
+        let table = table.clone();
         menu.add(
-            "&Action/Clear\t",
+            "Action/Hide Inactive",
             Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_| list.write().unwrap().clear(),
+            MenuFlag::Toggle,
+            move |_| {
+                let simple_table = &mut table.lock().unwrap();
+                simple_table.model.lock().unwrap().toggle_missing();
+                simple_table.redraw();
+            },
         );
     }
-    add_rp1210_menu(connection_string_fn, channels_fn, &mut menu, bus.clone())?;
-    Ok(())
+    wind.end();
+    wind.resizable(&wind);
+    wind.show();
 }
 
-fn save_log(list: Arc<RwLock<Vec<J1939Packet>>>) -> () {
+fn map_address_wizard(table: &Arc<Mutex<SimpleTable<DbcModel>>>) {
+    let mut wind = Window::default()
+        .with_size(100, 180)
+        .with_label("Map Address");
+
+    let pack = Flex::default_fill()
+        .with_type(PackType::Vertical)
+        .size_of(&wind);
+
+    Frame::default().with_label("From (hex)");
+    let mut from = Input::default().with_size(35, 35);
+    from.set_value("FE");
+    Frame::default().with_label("To (hex)");
+    let mut to = Input::default_fill().with_size(35, 35).with_label("To");
+    to.set_value("00");
+    let mut go = Button::default_fill()
+        .with_size(35, 35)
+        .with_label("Update");
+
+    pack.end();
+
+    wind.end();
+    wind.resizable(&pack);
+    wind.show();
+
+    let table = table.clone();
+    go.set_callback(move |_| {
+        let from = u8::from_str_radix(&from.value(), 16);
+        let to = u8::from_str_radix(&to.value(), 16);
+        if from.is_ok() && to.is_ok() {
+            table.lock()
+                .unwrap()
+                .model
+                .lock()
+                .unwrap()
+                .map_address(from.unwrap(), to.unwrap());
+            wind.hide();
+        }
+    });
+}
+
+fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> () {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if fc.filenames().is_empty() {
@@ -311,51 +291,83 @@ fn save_log(list: Arc<RwLock<Vec<J1939Packet>>>) -> () {
         out.write_all(b"\r\n").expect("Failed to write log file.");
     }
 }
-fn add_rp1210_menu(
-    connection_string_fn: impl Fn() -> String + 'static,
-    channels_fn: impl Fn() -> Vec<u8> + 'static,
-    menu: &mut SysMenuBar,
-    bus: MultiQueue<J1939Packet>,
-) -> Result<(), Error> {
-    let adapter = Arc::new(RefCell::new(Option::None));
+fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
+    let connection_string = Arc::new(Mutex::new("J1939:Baud=500".to_string()));
 
-    let connection_string_fn = Arc::new(connection_string_fn);
-    let channels_fn = Arc::new(channels_fn);
+    let connection_string2 = connection_string.clone();
+    menu.add(
+        "&RP1210/Connection String...",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_| {
+            let s = connection_string2.lock();
+            if let Ok(mut str) = s {
+                if let Some(r) = fltk::dialog::input_default("Connection String", &*str) {
+                    *str = r;
+                }
+            }
+        },
+    );
+
+    let channels = Arc::new(Mutex::new(vec![1]));
+    let c = channels.clone();
+    menu.add(
+        "RP1210/Channel 1",
+        Shortcut::None,
+        menu::MenuFlag::Radio,
+        move |_| channel_select(&c, 1),
+    );
+    let c = channels.clone();
+    menu.add(
+        "RP1210/Channel 2",
+        Shortcut::None,
+        menu::MenuFlag::Radio,
+        move |_| channel_select(&c, 2),
+    );
+    let c = channels.clone();
+    menu.add(
+        "_RP1210/Channel 3",
+        Shortcut::None,
+        menu::MenuFlag::Radio,
+        move |_| channel_select(&c, 3),
+    );
+
+    let adapter = Arc::new(RefCell::new(Option::None));
 
     for product in rp1210_parsing::list_all_products()? {
         for device in product.devices {
-            let name = format!("&RP1210/{}/{}\t", &product.description, &device.description);
+            let name = format!("RP1210/{}/@> {}\t", &product.description, &device.description);
             let id = product.id.clone();
             let bus = bus.clone();
             let device_id = device.id;
             let adapter = adapter.clone();
 
-            let connection_string_fn = connection_string_fn.clone();
-            let channels_fn = channels_fn.clone();
-
+            let cs = connection_string.clone();
+            let channels = channels.clone();
             menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
                 // unload old DLL
                 adapter.replace(None);
-                //eprintln!("LOADING: {} {}", id, cs_fn.clone()());
+                eprintln!(
+                    "LOADING: {} {} channels: {:?}",
+                    id,
+                    cs.lock().unwrap(),
+                    channels.lock().unwrap()
+                );
 
                 // load new DLL
-                match Rp1210::new(
-                    id.as_str(),
-                    device_id,
-                    connection_string_fn().as_str(),
-                    0xF9,
-                    bus.clone(),
-                ) {
+                let lock = cs.lock();
+                let connection_string = &*lock.unwrap();
+                match Rp1210::new(id.as_str(), device_id, connection_string, 0xF9, bus.clone()) {
                     Ok(mut rp1210) => {
-                        let channels_fn = channels_fn();
-                        if channels_fn.is_empty() {
+                        let channels = &channels.lock().unwrap();
+                        if channels.is_empty() {
                             rp1210
                                 .run(None)
                                 .expect("Failed to open adapter with default channel");
                         } else {
-                            for channel in channels_fn {
+                            for channel in channels.iter() {
                                 rp1210
-                                    .run(Some(channel))
+                                    .run(Some(*channel))
                                     .expect(format!("Failed to open channel {}", channel).as_str());
                             }
                         }
@@ -370,7 +382,7 @@ fn add_rp1210_menu(
         }
     }
     menu.add(
-        "&RP1210/Stop",
+        "&RP1210/@|| Stop",
         Shortcut::None,
         menu::MenuFlag::Normal,
         move |_b| {
@@ -378,4 +390,10 @@ fn add_rp1210_menu(
         },
     );
     Ok(())
+}
+
+fn channel_select(c: &Arc<Mutex<Vec<u8>>>, channel: u8) {
+    let mut cb = c.lock().unwrap();
+    cb.clear();
+    cb.push(channel);
 }

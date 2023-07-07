@@ -42,7 +42,7 @@ impl DbcModel {
         }
     }
     pub fn restore_missing(self: &mut Self) {
-            self.rows = calc_rows(&self.pgns);
+        self.rows = calc_rows(&self.pgns);
     }
 
     fn spn_value(&self, row: Row) -> String {
@@ -94,6 +94,14 @@ impl DbcModel {
                 pgn_definition
             })
             .collect();
+    }
+
+    pub(crate) fn toggle_missing(&mut self) {
+        if calc_rows(&self.pgns).len() == self.row_count() {
+            self.remove_missing()
+        } else {
+            self.restore_missing()
+        }
     }
 }
 
