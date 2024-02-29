@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod dbc_table;
+mod packet_model;
 
 #[derive(RustEmbed)]
 #[folder = "assets/"]
@@ -13,15 +14,13 @@ use std::{
     io::{BufWriter, Write},
     option::Option,
     sync::{Arc, Mutex, RwLock},
-    thread,
-    time::{Duration, Instant},
 };
 
 use anyhow::Error;
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
-    app,
+    app::{self, copy},
     button::Button,
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
     enums::{self, Mode, Shortcut},
@@ -30,85 +29,15 @@ use fltk::{
     image::PngImage,
     input::Input,
     menu::{self, MenuFlag, SysMenuBar},
-    prelude::{GroupExt, InputExt, MenuExt, WidgetBase, WidgetExt, WindowExt},
+    prelude::{GroupExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt, WindowExt},
     table::Table,
     window::Window,
 };
+use packet_model::PacketModel;
 use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
 use rust_embed::RustEmbed;
-use simple_table::simple_table::{Order, SimpleModel, SimpleTable};
+use simple_table::simple_table::SimpleTable;
 use timer::Timer;
-
-/// simple table model to represent log
-#[derive(Clone, Default)]
-struct PacketModel {
-    pub list: Arc<RwLock<Vec<J1939Packet>>>,
-    table: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
-}
-
-impl PacketModel {
-    /// copy packets from bus to table
-    pub fn run(&self, bus: MultiQueue<J1939Packet>) -> thread::JoinHandle<()> {
-        let list = self.list.clone();
-        let table = self.table.clone();
-        let mut last_trim = Instant::now();
-        thread::spawn(move || {
-            bus.iter_for(Duration::from_secs(60 * 60 * 24 * 7))
-                .for_each(|p| {
-                    let start = p.time() - 15.0; // 15 s
-                    list.write().unwrap().push(p.clone());
-                    let mut hash_map = table.write().unwrap();
-                    if let Some(v) = hash_map.get_mut(&p.id()) {
-                        v.push_back(p);
-                    } else {
-                        let id = p.id();
-                        let mut vd = VecDeque::new();
-                        vd.push_back(p);
-                        hash_map.insert(id, vd);
-                    }
-                    // clean up every 200 ms
-                    if last_trim.elapsed() > Duration::from_millis(200) {
-                        hash_map.values_mut().for_each(|v| {
-                            while v.front().map_or(false, |p| p.time() < start) {
-                                v.pop_front();
-                            }
-                        });
-                        last_trim = Instant::now();
-                    }
-                })
-        })
-    }
-}
-
-impl SimpleModel for PacketModel {
-    fn row_count(&mut self) -> usize {
-        self.list.read().unwrap().len()
-    }
-
-    fn column_count(&mut self) -> usize {
-        1
-    }
-
-    fn header(&mut self, _col: usize) -> String {
-        "packet".into()
-    }
-
-    fn column_width(&mut self, _col: usize) -> u32 {
-        1200
-    }
-
-    fn cell(&mut self, row: i32, _col: i32) -> Option<String> {
-        self.list
-            .read()
-            .unwrap()
-            .get(row as usize)
-            .map(|p| p.to_string())
-    }
-
-    fn sort(&mut self, _col: usize, _order: Order) {
-        // sorting not supported
-    }
-}
 
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
@@ -119,9 +48,9 @@ fn main() -> Result<(), anyhow::Error> {
     let packet_model = PacketModel::default();
     packet_model.run(bus.clone());
 
-    let app = app::App::default().with_scheme(app::Scheme::Plastic);
+    let app = app::App::default().with_scheme(app::Scheme::Gtk);
     app.set_visual(Mode::MultiSample | Mode::Alpha)?;
- 
+
     let mut wind = Window::default()
         .with_size(400, 600)
         .with_label(&format!("J1939 Log {}", &env!("CARGO_PKG_VERSION")));
@@ -157,9 +86,34 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
 
+    let table = Table::default_fill();
+    {
+        let mut table = table.clone();
+        menu.add(
+            "&Edit/Select All\t",
+            Shortcut::Ctrl | 'a',
+            menu::MenuFlag::Normal,
+            move |_| {
+                table.set_selection(0, 0, table.rows(), table.cols());
+            },
+        );
+    }
+    {
+        let list = packet_model.list.clone();
+        menu.add(
+            "&Edit/Copy\t",
+            Shortcut::Ctrl | 'c',
+            menu::MenuFlag::Normal,
+            move |_| {
+                let read = &list.read().unwrap();
+                let collect: Vec<String> = read.iter().map(|p| format!("{}", p)).collect();
+                copy(collect.join("\n").as_str());
+            },
+        );
+    }
+
     add_rp1210_menu(&mut menu, bus.clone())?;
 
-    let table = Table::default_fill();
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 18);
     table.end();
@@ -267,7 +221,8 @@ fn map_address_wizard(table: &Arc<Mutex<SimpleTable<DbcModel>>>) {
         let from = u8::from_str_radix(&from.value(), 16);
         let to = u8::from_str_radix(&to.value(), 16);
         if from.is_ok() && to.is_ok() {
-            table.lock()
+            table
+                .lock()
                 .unwrap()
                 .model
                 .lock()
@@ -291,6 +246,7 @@ fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> () {
         out.write_all(b"\r\n").expect("Failed to write log file.");
     }
 }
+
 fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
     let connection_string = Arc::new(Mutex::new("J1939:Baud=500".to_string()));
 
@@ -336,7 +292,10 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
 
     for product in rp1210_parsing::list_all_products()? {
         for device in product.devices {
-            let name = format!("RP1210/{}/@> {}\t", &product.description, &device.description);
+            let name = format!(
+                "RP1210/{}/@> {}\t",
+                &product.description, &device.description
+            );
             let id = product.id.clone();
             let bus = bus.clone();
             let device_id = device.id;
