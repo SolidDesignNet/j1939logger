@@ -137,6 +137,7 @@ fn main() -> Result<(), anyhow::Error> {
 
 fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, timer: &Arc<Timer>) {
     let mut fc = FileDialog::new(BrowseMultiFile);
+    fc.set_filter("*.dbc");
     fc.show();
     if fc.filenames().is_empty() {
         return;
@@ -186,6 +187,29 @@ fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, tim
             },
         );
     }
+    {
+        let mut table = table.lock().unwrap().table.clone();
+        menu.add(
+            "&Edit/Select All\t",
+            Shortcut::Ctrl | 'a',
+            menu::MenuFlag::Normal,
+            move |_| {
+                table.set_selection(0, 0, table.rows(), table.cols());
+            },
+        );
+    }
+    {
+        let table = table.clone();
+        menu.add(
+            "&Edit/Copy\t",
+            Shortcut::Ctrl | 'c',
+            menu::MenuFlag::Normal,
+            move |_| {
+                app::copy(&table.lock().unwrap().copy("\t", "\n"));
+            },
+        );
+    }
+
     wind.end();
     wind.resizable(&wind);
     wind.show();
