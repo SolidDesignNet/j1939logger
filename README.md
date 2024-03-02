@@ -1,6 +1,15 @@
-Simple FLTK RP1210 based J1939 CAN logger.
+Simple RP1210 based J1939 CAN logger.
 
-J1939 CAN logs and DBC display for RP1210 devices using multiple channels.  Now with Spark Lines
-![image](https://user-images.githubusercontent.com/1972001/221853787-a9ca7609-d9a5-4109-a978-5cafda1fc33a.png)
+J1939 CAN logs and DBC display for RP1210 devices using multiple channels.
+![image](https://github.com/SolidDesignNet/j1939logger/assets/1972001/d7596418-933e-428e-9f7e-9170cb49a768)
 
-![image](https://user-images.githubusercontent.com/1972001/219876428-ad0bf8d0-f0bd-449b-bddb-5c3f60475918.png)
+To use:
+1. Select adapter (rp1210 adapter driver must be installed):
+![image](https://github.com/SolidDesignNet/j1939logger/assets/1972001/402f00df-0211-40cf-b758-5937fe3bc75b)
+2. That's all.
+
+The log can be saved to another file, or copy and paste to a text editor.
+
+The log uses the adpater to decode the J1939 Transport Protocol.
+
+Loading a DBC file will open another window which decodes the signals defined in the DBC file.  If the DBC file has incorrect source addresses defined (sometimes FEx is used as a placeholder), Action/Map Address... will allow you to change the SA for all signals with the wrong SA.  Copy and paste also works in this window.
