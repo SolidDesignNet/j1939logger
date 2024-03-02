@@ -4,7 +4,7 @@ extern crate winres;
 #[cfg(windows)]
 fn main() {
     let mut res = winres::WindowsResource::new();
-    res.set_icon("test.ico");
+    res.set_icon("assets/can.ico");
     res.compile().unwrap();
 }
 
