@@ -1,12 +1,13 @@
-use std::io;
-#[cfg(windows)] use winres::WindowsResource;
+#[cfg(windows)]
+extern crate winres;
 
-fn main() -> io::Result<()> {
-    #[cfg(windows)] {
-        WindowsResource::new()
-            // This path can be absolute, or relative to your crate root.
-            .set_icon("assets/cancan.ico")
-            .compile()?;
-    }
-    Ok(())
+#[cfg(windows)]
+fn main() {
+    let mut res = winres::WindowsResource::new();
+    res.set_icon("test.ico");
+    res.compile().unwrap();
+}
+
+#[cfg(unix)]
+fn main() {
 }

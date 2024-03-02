@@ -2,6 +2,7 @@
 name = "j1939logger"
 version = "0.1.5"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 simple_table= { version = "0.1.7", git = "https://github.com/SolidDesignNet/simple_table" }
@@ -12,14 +13,15 @@ rp1210= {version="0.1.2", git = "https://github.com/SolidDesignNet/rp1210-rs" }
 # remove bundled for win32 
 fltk = {version="1.3.13"}#,features = ["fltk-bundled"]}
 
-clap = { version = "4.4.11", features = ["derive"] }
+clap = { version = "^4.4", features = ["derive"] }
 anyhow = "^1"
-timer="0.2.0"
-chrono="0.4.22"
-rust-embed="8.1.0"
+timer="^0.2"
+chrono="^0.4"
+rust-embed="^8"
 
-canparse = {version="0.1.5" , git="https://github.com/battjt/canparse.git"}
+canparse = {version="^0.1.5" , git="https://github.com/battjt/canparse.git"}
 #canparse = {version="0.1.6" , path="../canparse"}
+webbrowser={version="^0.8"} 
 
 [target.'cfg(windows)'.build-dependencies]
-winres = "0.1"
+winres = {version="^0.1"}

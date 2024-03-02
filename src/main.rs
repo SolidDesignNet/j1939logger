@@ -58,31 +58,40 @@ fn main() -> Result<(), anyhow::Error> {
     let pack = Pack::default_fill();
 
     let mut menu = SysMenuBar::default().with_size(100, 35);
-    let pm2 = &packet_model;
-    let timer2 = timer.clone();
-    let table = pm2.table.clone();
-    menu.add(
-        "&Action/@fileopen Load DBC...\t",
-        Shortcut::None,
-        menu::MenuFlag::Normal,
-        move |_b| load_dbc_window(&table, &timer2),
-    );
     {
-        let list = pm2.list.clone();
+        let timer = timer.clone();
+        let table = packet_model.table.clone();
+        menu.add(
+            "&Action/@fileopen Load DBC...\t",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_b| {
+                load_dbc_window(&table, &timer).expect("Canceled");
+            },
+        );
+    }
+    {
+        let list = packet_model.list.clone();
         menu.add(
             "&Action/@filesave Save...\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
-            move |_| -> () { save_log(&list) },
+            move |_| -> () {
+                save_log(&list).expect("Unable to save packet log.");
+            },
         );
     }
     {
-        let list = pm2.list.clone();
+        let list = packet_model.list.clone();
         menu.add(
             "&Action/@refresh Clear\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
-            move |_| list.write().unwrap().clear(),
+            move |_| {
+                list.write()
+                    .expect("Unable to lock model for clear.")
+                    .clear()
+            },
         );
     }
 
@@ -105,7 +114,7 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::Ctrl | 'c',
             menu::MenuFlag::Normal,
             move |_| {
-                let read = &list.read().unwrap();
+                let read = list.read().expect("Unable to lock model for copy.");
                 let collect: Vec<String> = read.iter().map(|p| format!("{}", p)).collect();
                 copy(collect.join("\n").as_str());
             },
@@ -113,6 +122,16 @@ fn main() -> Result<(), anyhow::Error> {
     }
 
     add_rp1210_menu(&mut menu, bus.clone())?;
+
+    menu.add(
+        "&Action/How to...\t",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_b| {
+            webbrowser::open("https://github.com/SolidDesignNet/j1939logger/blob/main/README.md")
+                .expect("Unable to open web browser.");
+        },
+    );
 
     let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
     simple_table.set_font(enums::Font::Screen, 18);
@@ -123,34 +142,43 @@ fn main() -> Result<(), anyhow::Error> {
     wind.end();
     wind.resizable(&wind);
     wind.set_icon(Some(PngImage::from_data(
-        &Asset::get("cancan.png").unwrap().data,
+        &Asset::get("can.png")
+            .expect("Unable to read icon png.")
+            .data,
     )?));
     wind.show();
 
     simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
 
     // run the app
-    app.run().unwrap();
+    app.run()?;
 
     Ok(())
 }
 
-fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, timer: &Arc<Timer>) {
+fn load_dbc_window(
+    table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
+    timer: &Arc<Timer>,
+) -> Result<(), anyhow::Error> {
     let mut fc = FileDialog::new(BrowseMultiFile);
     fc.set_filter("*.dbc");
     fc.show();
     if fc.filenames().is_empty() {
-        return;
+        // canceled
+        return Ok(());
     }
-    let filename = fc.filename();
+    let path = fc.filename();
+    let filename = path.to_str().unwrap_or_default();
     let model = DbcModel::new(
-        PgnLibrary::from_dbc_file(filename.clone()).unwrap(),
+        PgnLibrary::from_dbc_file(path.clone())
+            .expect(&format!("Unable to read dbc file {}.", filename)),
         table.clone(),
     );
 
-    let mut wind = Window::default()
-        .with_size(600, 300)
-        .with_label(filename.to_str().unwrap());
+    let mut wind = Window::default().with_size(600, 300).with_label(filename);
+    wind.set_icon(Some(PngImage::from_data(
+        &Asset::get("can.png").expect("Unable to load icon.").data,
+    )?));
 
     let pack = Pack::default_fill();
 
@@ -170,7 +198,7 @@ fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, tim
             Shortcut::None,
             MenuFlag::Normal,
             move |_| {
-                map_address_wizard(&table);
+                map_address_wizard(table.clone());
             },
         );
     }
@@ -181,14 +209,22 @@ fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, tim
             Shortcut::None,
             MenuFlag::Toggle,
             move |_| {
-                let simple_table = &mut table.lock().unwrap();
-                simple_table.model.lock().unwrap().toggle_missing();
+                let simple_table = &mut table.lock().expect("Unable to lock simple table.");
+                simple_table
+                    .model
+                    .lock()
+                    .expect("Unable to lock model.")
+                    .toggle_missing();
                 simple_table.redraw();
             },
         );
     }
     {
-        let mut table = table.lock().unwrap().table.clone();
+        let mut table = table
+            .lock()
+            .expect("Unable to lock simple table")
+            .table
+            .clone();
         menu.add(
             "&Edit/Select All\t",
             Shortcut::Ctrl | 'a',
@@ -205,7 +241,12 @@ fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, tim
             Shortcut::Ctrl | 'c',
             menu::MenuFlag::Normal,
             move |_| {
-                app::copy(&table.lock().unwrap().copy("\t", "\n"));
+                app::copy(
+                    &table
+                        .lock()
+                        .expect("Unable to lock simple table.")
+                        .copy("\t", "\n"),
+                );
             },
         );
     }
@@ -213,9 +254,10 @@ fn load_dbc_window(table: &Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>, tim
     wind.end();
     wind.resizable(&wind);
     wind.show();
+    Ok(())
 }
 
-fn map_address_wizard(table: &Arc<Mutex<SimpleTable<DbcModel>>>) {
+fn map_address_wizard(table: Arc<Mutex<SimpleTable<DbcModel>>>) {
     let mut wind = Window::default()
         .with_size(100, 180)
         .with_label("Map Address");
@@ -240,78 +282,85 @@ fn map_address_wizard(table: &Arc<Mutex<SimpleTable<DbcModel>>>) {
     wind.resizable(&pack);
     wind.show();
 
-    let table = table.clone();
     go.set_callback(move |_| {
-        let from = u8::from_str_radix(&from.value(), 16);
-        let to = u8::from_str_radix(&to.value(), 16);
-        if from.is_ok() && to.is_ok() {
+        if let (Ok(from), Ok(to)) = (
+            u8::from_str_radix(&from.value(), 16),
+            u8::from_str_radix(&to.value(), 16),
+        ) {
             table
                 .lock()
-                .unwrap()
+                .expect("Unable to lock simple table")
                 .model
                 .lock()
-                .unwrap()
-                .map_address(from.unwrap(), to.unwrap());
+                .expect("Unable to lock model.")
+                .map_address(from, to);
             wind.hide();
         }
     });
 }
 
-fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> () {
+fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> Result<(), Error> {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
-    if fc.filenames().is_empty() {
-        return;
+    if !fc.filenames().is_empty() {
+        let mut out =
+            BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
+        for p in list.read().expect("Unable to lock list.").iter() {
+            out.write_all(p.to_string().as_bytes())
+                .expect("Failed to write log file.");
+            out.write_all(b"\r\n").expect("Failed to write log file.");
+        }
     }
-    let mut out = BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
-    for p in list.read().unwrap().iter() {
-        out.write_all(p.to_string().as_bytes())
-            .expect("Failed to write log file.");
-        out.write_all(b"\r\n").expect("Failed to write log file.");
-    }
+    Ok(())
 }
 
 fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
     let connection_string = Arc::new(Mutex::new("J1939:Baud=500".to_string()));
 
-    let connection_string2 = connection_string.clone();
-    menu.add(
-        "&RP1210/Connection String...",
-        Shortcut::None,
-        menu::MenuFlag::Normal,
-        move |_| {
-            let s = connection_string2.lock();
-            if let Ok(mut str) = s {
-                if let Some(r) = fltk::dialog::input_default("Connection String", &*str) {
-                    *str = r;
+    {
+        let connection_string = connection_string.clone();
+        menu.add(
+            "&RP1210/Connection String...",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_| {
+                let s = connection_string.lock();
+                if let Ok(mut str) = s {
+                    if let Some(r) = fltk::dialog::input_default("Connection String", &*str) {
+                        *str = r;
+                    }
                 }
-            }
-        },
-    );
-
+            },
+        );
+    }
     let channels = Arc::new(Mutex::new(vec![1]));
-    let c = channels.clone();
-    menu.add(
-        "RP1210/Channel 1",
-        Shortcut::None,
-        menu::MenuFlag::Radio,
-        move |_| channel_select(&c, 1),
-    );
-    let c = channels.clone();
-    menu.add(
-        "RP1210/Channel 2",
-        Shortcut::None,
-        menu::MenuFlag::Radio,
-        move |_| channel_select(&c, 2),
-    );
-    let c = channels.clone();
-    menu.add(
-        "_RP1210/Channel 3",
-        Shortcut::None,
-        menu::MenuFlag::Radio,
-        move |_| channel_select(&c, 3),
-    );
-
+    {
+        let c = channels.clone();
+        menu.add(
+            "RP1210/Channel 1",
+            Shortcut::None,
+            menu::MenuFlag::Radio,
+            move |_| channel_select(&c, 1),
+        );
+    }
+    {
+        let c = channels.clone();
+        menu.add(
+            "RP1210/Channel 2",
+            Shortcut::None,
+            menu::MenuFlag::Radio,
+            move |_| channel_select(&c, 2),
+        );
+    }
+    {
+        let c = channels.clone();
+        menu.add(
+            "_RP1210/Channel 3",
+            Shortcut::None,
+            menu::MenuFlag::Radio,
+            move |_| channel_select(&c, 3),
+        );
+    }
     let adapter = Arc::new(RefCell::new(Option::None));
 
     for product in rp1210_parsing::list_all_products()? {
