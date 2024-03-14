@@ -1,6 +1,6 @@
 [package]
 name = "j1939logger"
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 build = "build.rs"
 
@@ -11,15 +11,15 @@ rp1210= {version="0.2.1", git = "https://github.com/SolidDesignNet/rp1210-rs" }
 #rp1210= { path = "../rp1210-rs" }
 
 # remove bundled for win32 
-fltk = {version="1.3.13"}#,features = ["fltk-bundled"]}
+fltk = {version="1.4.26"}#,features = ["fltk-bundled"]}
 
-clap = { version = "^4.4", features = ["derive"] }
+clap = { version = "4.5.2", features = ["derive"] }
 anyhow = "^1"
 timer="^0.2"
 chrono="^0.4"
 rust-embed="^8"
 
-canparse = {version="^0.1.5" , git="https://github.com/battjt/canparse.git"}
+canparse = {version="^0.1.6" , git="https://github.com/battjt/canparse.git"}
 #canparse = {version="0.1.6" , path="../canparse"}
 webbrowser={version="^0.8"} 
 
