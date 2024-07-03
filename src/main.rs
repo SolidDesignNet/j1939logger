@@ -333,6 +333,20 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
             },
         );
     }
+
+    let app_packetization = Arc::new(Mutex::new(false));
+    {
+        let app_packetization = app_packetization.clone();
+        menu.add(
+            "RP1210/Application Packetization",
+            Shortcut::None,
+            menu::MenuFlag::Toggle,
+            move |_| {
+                let mut m = app_packetization.lock().unwrap();
+                *m = !*m;
+            },
+        );
+    }
     let channels = Arc::new(Mutex::new(vec![1]));
     {
         let c = channels.clone();
@@ -355,7 +369,7 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
     {
         let c = channels.clone();
         menu.add(
-            "_RP1210/Channel 3",
+            "RP1210/_Channel 3",
             Shortcut::None,
             menu::MenuFlag::Radio,
             move |_| channel_select(&c, 3),
@@ -376,6 +390,7 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
 
             let cs = connection_string.clone();
             let channels = channels.clone();
+            let app_packetization = app_packetization.clone();
             menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
                 // unload old DLL
                 adapter.replace(None);
@@ -394,12 +409,12 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
                         let channels = &channels.lock().unwrap();
                         if channels.is_empty() {
                             rp1210
-                                .run(None)
+                                .run(None, *app_packetization.lock().unwrap())
                                 .expect("Failed to open adapter with default channel");
                         } else {
                             for channel in channels.iter() {
                                 rp1210
-                                    .run(Some(*channel))
+                                    .run(Some(*channel), *app_packetization.lock().unwrap())
                                     .expect(format!("Failed to open channel {}", channel).as_str());
                             }
                         }
