@@ -394,12 +394,12 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
                         let channels = &channels.lock().unwrap();
                         if channels.is_empty() {
                             rp1210
-                                .run(None)
+                                .run(None, true)
                                 .expect("Failed to open adapter with default channel");
                         } else {
                             for channel in channels.iter() {
                                 rp1210
-                                    .run(Some(*channel))
+                                    .run(Some(*channel), true)
                                     .expect(format!("Failed to open channel {}", channel).as_str());
                             }
                         }
