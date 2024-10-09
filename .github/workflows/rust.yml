@@ -55,6 +55,6 @@ jobs:
       working-directory: src
       shell: bash
       run: |
-        if [[ ${RUNNER_OS} == "Linux" ]]; then
+        if [[ ${RUNNER_OS} == "Windows" ]]; then
             cargo build --quiet || cargo build --verbose
         fi
