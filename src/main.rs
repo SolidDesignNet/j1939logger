@@ -133,7 +133,7 @@ fn main() -> Result<(), anyhow::Error> {
         },
     );
 
-    let mut simple_table = SimpleTable::new(table.clone(), Box::new(packet_model));
+    let mut simple_table = SimpleTable::new(table.clone(), packet_model);
     simple_table.set_font(enums::Font::Screen, 18);
     table.end();
     pack.resizable(&table);
@@ -183,7 +183,7 @@ fn load_dbc_window(
     let pack = Pack::default_fill();
 
     let mut menu = SysMenuBar::default().with_size(100, 35);
-    let mut table = SimpleTable::new(Table::default_fill(), Box::new(model));
+    let mut table = SimpleTable::new(Table::default_fill(), model);
     table.table.end();
 
     pack.resizable(&table.table);

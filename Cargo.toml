@@ -5,7 +5,7 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-simple_table= { version = "0.1.7", git = "https://github.com/SolidDesignNet/simple_table" }
+simple_table= { version = "0.2.0", git = "https://github.com/SolidDesignNet/simple_table" }
 #simple_table= { version = "0.1.7", path = "../simple_table" }
 rp1210= {version="0.2.1", git = "https://github.com/SolidDesignNet/rp1210-rs" }
 #rp1210= { path = "../rp1210-rs" }
@@ -14,14 +14,14 @@ rp1210= {version="0.2.1", git = "https://github.com/SolidDesignNet/rp1210-rs" }
 fltk = {version="1.4.26"}#,features = ["fltk-bundled"]}
 
 clap = { version = "4.5.2", features = ["derive"] }
-anyhow = "^1"
+anyhow = "1.0.89"
 timer="^0.2"
-chrono="^0.4"
-rust-embed="^8"
+chrono="0.4.38"
+rust-embed="8.5.0"
 
 canparse = {version="^0.1.6" , git="https://github.com/battjt/canparse.git"}
 #canparse = {version="0.1.6" , path="../canparse"}
-webbrowser={version="^0.8"} 
+webbrowser={version="1.0.2"} 
 
 [target.'cfg(windows)'.build-dependencies]
 winres = {version="^0.1"}
