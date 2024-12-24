@@ -8,7 +8,7 @@ mod packet_model;
 struct Asset;
 
 use std::{
-    cell::RefCell,
+    
     collections::{HashMap, VecDeque},
     fs::File,
     io::{BufWriter, Write},
@@ -17,6 +17,7 @@ use std::{
 };
 
 use anyhow::Error;
+use can_adapter::{common::Connection, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
@@ -34,7 +35,6 @@ use fltk::{
     window::Window,
 };
 use packet_model::PacketModel;
-use rp1210::{multiqueue::MultiQueue, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
 use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
 use timer::Timer;
@@ -42,11 +42,7 @@ use timer::Timer;
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
     let timer = Arc::new(Timer::new());
-
-    let bus: MultiQueue<J1939Packet> = MultiQueue::new();
-
-    let packet_model = PacketModel::default();
-    packet_model.run(bus.clone());
+    let cm = Arc::new(Mutex::new(ConnectionManager::new()));
 
     let app = app::App::default().with_scheme(app::Scheme::Gtk);
     app.set_visual(Mode::MultiSample | Mode::Alpha)?;
@@ -60,7 +56,7 @@ fn main() -> Result<(), anyhow::Error> {
     let mut menu = SysMenuBar::default().with_size(100, 35);
     {
         let timer = timer.clone();
-        let table = packet_model.table.clone();
+        let table = cm.lock().unwrap().packet_model.table.clone();
         menu.add(
             "&Action/@fileopen Load DBC...\t",
             Shortcut::None,
@@ -71,7 +67,7 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
     {
-        let list = packet_model.list.clone();
+        let list = cm.lock().unwrap().packet_model.list.clone();
         menu.add(
             "&Action/@filesave Save...\t",
             Shortcut::None,
@@ -82,7 +78,7 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
     {
-        let list = packet_model.list.clone();
+        let list = cm.lock().unwrap().packet_model.list.clone();
         menu.add(
             "&Action/@refresh Clear\t",
             Shortcut::None,
@@ -108,7 +104,7 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
     {
-        let list = packet_model.list.clone();
+        let list = cm.lock().unwrap().packet_model.list.clone();
         menu.add(
             "&Edit/Copy\t",
             Shortcut::Ctrl | 'c',
@@ -121,7 +117,7 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
 
-    add_rp1210_menu(&mut menu, bus.clone())?;
+    add_rp1210_menu(&mut menu, cm.clone())?;
 
     menu.add(
         "&Action/How to...\t",
@@ -133,7 +129,7 @@ fn main() -> Result<(), anyhow::Error> {
         },
     );
 
-    let mut simple_table = SimpleTable::new(table.clone(), packet_model);
+    let mut simple_table = SimpleTable::new(table.clone(), cm.lock().unwrap().packet_model.clone());
     simple_table.set_font(enums::Font::Screen, 18);
     table.end();
     pack.resizable(&table);
@@ -313,8 +309,27 @@ fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> Result<(), Error> {
     }
     Ok(())
 }
+struct ConnectionManager {
+    connection: Arc<Mutex<Option<Box<dyn Connection>>>>,
+    packet_model: PacketModel,
+}
+impl ConnectionManager {
+    pub fn set(&mut self, connection: Option<Box<dyn Connection>>) {
+        *self.connection.lock().unwrap() = connection;
+        let mut mutex_guard = self.connection.lock().unwrap();
+        if let Some(c) = &mut *mutex_guard {
+            self.packet_model.run(c.as_mut());
+        }
+    }
 
-fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Result<(), Error> {
+    fn new() -> Self {
+        Self {
+            connection: Arc::new(Mutex::new(None)),
+            packet_model: PacketModel::default(),
+        }
+    }
+}
+fn add_rp1210_menu(menu: &mut SysMenuBar, cm: Arc<Mutex<ConnectionManager>>) -> Result<(), Error> {
     let connection_string = Arc::new(Mutex::new("J1939:Baud=500".to_string()));
 
     {
@@ -375,25 +390,24 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
             move |_| channel_select(&c, 3),
         );
     }
-    let adapter = Arc::new(RefCell::new(Option::None));
+        let cm = cm.clone();
 
     for product in rp1210_parsing::list_all_products()? {
         for device in product.devices {
+            let cm = cm.clone();
             let name = format!(
                 "RP1210/{}/@> {}\t",
                 &product.description, &device.description
             );
             let id = product.id.clone();
-            let bus = bus.clone();
             let device_id = device.id;
-            let adapter = adapter.clone();
 
             let cs = connection_string.clone();
             let channels = channels.clone();
             let app_packetization = app_packetization.clone();
             menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
                 // unload old DLL
-                adapter.replace(None);
+                cm.lock().unwrap().set(None);
                 eprintln!(
                     "LOADING: {} {} channels: {:?}",
                     id,
@@ -404,38 +418,46 @@ fn add_rp1210_menu(menu: &mut SysMenuBar, bus: MultiQueue<J1939Packet>) -> Resul
                 // load new DLL
                 let lock = cs.lock();
                 let connection_string = &*lock.unwrap();
-                match Rp1210::new(id.as_str(), device_id, connection_string, 0xF9, bus.clone()) {
-                    Ok(mut rp1210) => {
-                        let channels = &channels.lock().unwrap();
-                        if channels.is_empty() {
-                            rp1210
-                                .run(None, *app_packetization.lock().unwrap())
-                                .expect("Failed to open adapter with default channel");
-                        } else {
-                            for channel in channels.iter() {
-                                rp1210
-                                    .run(Some(*channel), *app_packetization.lock().unwrap())
-                                    .expect(format!("Failed to open channel {}", channel).as_str());
-                            }
+                let channels: Vec<Option<u8>> =
+                    channels.lock().unwrap().iter().map(|c| Some(*c)).collect();
+                let channels = if channels.is_empty() {
+                    vec![None]
+                } else {
+                    channels
+                };
+                for channel in channels {
+                    match Rp1210::new(
+                        id.as_str(),
+                        device_id,
+                        channel,
+                        connection_string,
+                        0xF9,
+                        *app_packetization.lock().unwrap(),
+                    ) {
+                        Ok(rp1210) => {
+                            cm.lock().unwrap().set(Some(Box::new(rp1210) as Box<dyn Connection + 'static>));
                         }
-                        adapter.replace(Some(rp1210));
-                    }
-                    Err(err) => {
-                        message_icon_label("Fail");
-                        message_default(&format!("Failed to open adapter: {}", err));
+                        Err(err) => {
+                            message_icon_label("Fail");
+                            message_default(&format!("Failed to open adapter: {}", err));
+                            cm.lock().unwrap().set(None);
+                        }
                     }
                 }
             });
         }
     }
-    menu.add(
-        "&RP1210/@|| Stop",
-        Shortcut::None,
-        menu::MenuFlag::Normal,
-        move |_b| {
-            adapter.replace(None);
-        },
-    );
+    {
+        let cm = cm.clone();
+        menu.add(
+            "&RP1210/@|| Stop",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_b| {
+                cm.lock().unwrap().set(None);
+            },
+        );
+    }
     Ok(())
 }
 

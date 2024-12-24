@@ -5,7 +5,7 @@ use std::{
 };
 
 use canparse::pgn::{ParseMessage, PgnDefinition, PgnLibrary, SpnDefinition};
-use rp1210::packet::J1939Packet;
+use can_adapter::packet::J1939Packet;
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
 #[derive(Debug, Clone)]
@@ -14,6 +14,7 @@ pub struct DbcModel {
     // pgn index in pgns, spn index in pgn
     rows: Vec<(usize, usize)>,
     packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
+    time: f64,
 }
 impl DbcModel {
     pub fn new(
@@ -76,8 +77,7 @@ impl DbcModel {
             .read()
             .unwrap()
             .get(&id)
-            .and_then(|v| v.back())
-            .cloned()
+            .map(|v| v[v.partition_point(|x| x.time() <= self.time)].clone())
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
         let f = from as u32;
@@ -115,6 +115,7 @@ pub fn new_with_pgns(
         pgns,
         rows,
         packets,
+        time: f64::MAX,
     }
 }
 
@@ -220,5 +221,16 @@ struct Row<'a> {
 impl Row<'_> {
     fn decode(&self, packet: &J1939Packet) -> Option<f64> {
         self.spn.parse_message(packet.data()).map(|v| v as f64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn verify_bin_search() {
+        let v = vec![1., 2., 3., 4., 5.];
+        assert_eq!(v.partition_point(|&x| x <= 2.5), 2);
+        assert_eq!(v.partition_point(|&x| x <= 3.0), 3);
+        assert_eq!(v.partition_point(|&x| x <= 3.5), 3);
     }
 }
