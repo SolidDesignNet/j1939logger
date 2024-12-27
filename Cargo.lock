@@ -131,9 +131,9 @@ checksum = "428d9aa8fbc0670b7b8d6030a7fadd0f86151cae55e4dbbece15f3780a3dfaf3"
 
 [[package]]
 name = "can_adapter"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "60d07dfb317f0830142c64a4c8f141f88ff17027df2fbba13e7b43507ffc6014"
+checksum = "4f9ebf875b25fccee227864bbb358e8627bf0ac62bf85bcb1117ea330fd6b6c8"
 dependencies = [
  "anyhow",
  "clap",

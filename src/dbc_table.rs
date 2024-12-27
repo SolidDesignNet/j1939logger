@@ -1,52 +1,70 @@
+use core::f64;
 use std::{
-    collections::{HashMap, VecDeque},
     mem::swap,
-    sync::{Arc, RwLock},
+    sync::{atomic::AtomicBool, Arc, RwLock},
+    thread,
+    time::Duration,
 };
 
-use canparse::pgn::{ParseMessage, PgnDefinition, PgnLibrary, SpnDefinition};
-use can_adapter::packet::J1939Packet;
+use can_adapter::{connection::Connection, packet::J1939Packet};
+use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
-#[derive(Debug, Clone)]
+/// SimpleModel representing a DBC file with a Connection.
 pub struct DbcModel {
+    /// PGN Definitions in row order.
     pgns: Vec<PgnDefinition>,
-    // pgn index in pgns, spn index in pgn
-    rows: Vec<(usize, usize)>,
-    packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
+    /// pgn -> packets in chronological order
+    packets: Arc<RwLock<Vec<J1939Packet>>>,
+    /// meat of the struct
+    rows: Vec<Row>,
+    /// Most recent packet before this instant will be used.
+    /// packet time, not wallclock!
     time: f64,
+    running: Arc<AtomicBool>,
+}
+impl Drop for DbcModel {
+    fn drop(&mut self) {
+        self.running
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 impl DbcModel {
-    pub fn new(
-        dbc: PgnLibrary,
-        packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
-    ) -> DbcModel {
-        new_with_pgns(dbc.pgns.values().cloned().collect(), packets)
+    pub fn new(pgns: Vec<PgnDefinition>, connection: &dyn Connection) -> DbcModel {
+        let running = Arc::new(AtomicBool::new(true));
+        let packets = Arc::new(RwLock::new(Vec::new()));
+        let mut m = DbcModel {
+            pgns,
+            rows: Vec::new(),
+            packets,
+            time: f64::MAX,
+            running,
+        };
+        m.restore_missing();
+        m.run(connection);
+        m
     }
 
     pub fn remove_missing(self: &mut Self) {
-        let lock = self.packets.read();
-        if let Ok(map) = lock {
-            self.rows = self
-                .rows
-                .iter()
-                .filter(|(i, _)| {
-                    let def = self.pgns.get(*i);
-                    if let Some(pd) = def {
-                        map.contains_key(&(0xFFFF_FF & pd.id))
-                    } else {
-                        false
-                    }
-                })
-                .cloned()
-                .collect();
-        }
+        let packets = self.packets.read().unwrap();
+        let new_rows = self
+            .rows
+            .iter()
+            .filter(|row| {
+                packets
+                    .iter()
+                    .find(|packet| (0xFFFF_FF & row.pgn.id) == packet.id())
+                    .is_some()
+            })
+            .cloned()
+            .collect();
+        self.rows = new_rows;
     }
-    pub fn restore_missing(self: &mut Self) {
+    pub fn restore_missing(self: & mut Self) {
         self.rows = calc_rows(&self.pgns);
     }
 
-    fn spn_value(&self, row: Row) -> String {
+    fn spn_value(&self, row: &Row) -> String {
         // ignore pritority?
         self.last_packet(row.pgn.id & 0x3FFFFFF)
             .map_or("no packet".to_string(), |packet| {
@@ -63,21 +81,14 @@ impl DbcModel {
             .map_or("no packet".to_string(), |p| p.to_string())
     }
 
-    fn lookup_row(&self, index: &(usize, usize)) -> Row {
-        let pgn = &self.pgns[index.0];
-        let spns: Vec<&SpnDefinition> = pgn.spns.values().collect();
-        Row {
-            pgn,
-            spn: spns[index.1],
-        }
-    }
-
     fn last_packet(&self, id: u32) -> Option<J1939Packet> {
         self.packets
             .read()
             .unwrap()
-            .get(&id)
-            .map(|v| v[v.partition_point(|x| x.time() <= self.time)].clone())
+            .iter()
+            .rev()
+            .find(|p| p.time() <= self.time && p.id() == id)
+            .cloned()
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
         let f = from as u32;
@@ -96,42 +107,35 @@ impl DbcModel {
             .collect();
     }
 
-    pub(crate) fn toggle_missing(&mut self) {
-        if calc_rows(&self.pgns).len() == self.row_count() {
-            self.remove_missing()
+    pub(crate) fn toggle_missing(& mut self) {
+        if calc_rows(&self.pgns).len() == self.rows.len() {
+            self.remove_missing();
         } else {
-            self.restore_missing()
+            self.rows = calc_rows(&self.pgns);
+        }
+    }
+
+    fn run(&self, connection: &dyn Connection) {
+        let running = self.running.clone();
+        if !running.load(std::sync::atomic::Ordering::Relaxed) {
+            let iter = connection.iter_for(Duration::from_secs(60 * 60 * 24 * 999));
+            let packets = self.packets.clone();
+            thread::spawn(move || {
+                for p in iter {
+                    if !running.load(std::sync::atomic::Ordering::Relaxed) {
+                        return;
+                    }
+                    packets.write().unwrap().push(p)
+                }
+            });
         }
     }
 }
 
-pub fn new_with_pgns(
-    pgns: Vec<PgnDefinition>,
-    packets: Arc<RwLock<HashMap<u32, VecDeque<J1939Packet>>>>,
-) -> DbcModel {
-    let rows = calc_rows(&pgns);
-
-    DbcModel {
-        pgns,
-        rows,
-        packets,
-        time: f64::MAX,
-    }
-}
-
-fn calc_rows(pgns: &Vec<PgnDefinition>) -> Vec<(usize, usize)> {
-    let mut rows = Vec::new();
-
-    let mut p = 0;
-    while p < pgns.len() {
-        let mut s = 0;
-        while s < pgns[p].spns.len() {
-            rows.push((p, s));
-            s = s + 1;
-        }
-        p = p + 1;
-    }
-    rows
+fn calc_rows<'a>(pgns: &'a Vec<PgnDefinition>) -> Vec<Row> {
+    pgns.iter()
+        .flat_map(|p| p.spns.values().map(|s| Row { spn: s.clone(), pgn: p.clone() }))
+        .collect()
 }
 
 impl SimpleModel for DbcModel {
@@ -161,7 +165,7 @@ impl SimpleModel for DbcModel {
     }
 
     fn cell(&mut self, row: i32, col: i32) -> Option<String> {
-        let row = self.lookup_row(&self.rows[row as usize]);
+        let row = self.rows.get(row as usize).expect("Unknown row requested");
 
         match col {
             0 => Some(format!("{:08X}", row.pgn.id)),
@@ -169,7 +173,7 @@ impl SimpleModel for DbcModel {
             2 => Some(format!("{:02X}", row.pgn.sa())),
             3 => Some(row.spn.name.clone().into()),
             4 => Some(self.spn_value(row)),
-            6 => Some(self.packet_string(row.pgn)),
+            6 => Some(self.packet_string(&row.pgn)),
             _ => None,
         }
     }
@@ -177,14 +181,22 @@ impl SimpleModel for DbcModel {
     fn cell_delegate(&mut self, row: i32, col: i32) -> Option<Box<dyn DrawDelegate>> {
         match col {
             5 => {
-                let row = self.lookup_row(&self.rows[row as usize]);
+                let row = self.rows.get(row as usize).expect("Unknown row requested");
                 let id = row.pgn.id & 0x3FFFFFF;
-                self.packets
-                    .read()
-                    .unwrap()
-                    .get(&id)
-                    .map(|v| v.iter().map(|p| row.decode(p).unwrap_or(0.0)).collect())
-                    .map(|data: Vec<f64>| Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
+                let packets = self.packets.read().unwrap();
+                let time = packets
+                    .iter()
+                    .rev()
+                    .next()
+                    .map(|p| p.time())
+                    .unwrap_or_default();
+                let data = packets
+                    .iter()
+                    .rev()
+                    .filter(|p| p.id() == id)
+                    .map_while(|p| if p.time() > time { row.decode(p) } else { None })
+                    .collect();
+                Some(Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
             }
             _ => None,
         }
@@ -197,8 +209,6 @@ impl SimpleModel for DbcModel {
         let mut list = vec![];
         swap(&mut list, &mut self.rows);
         list.sort_by(|a, b| {
-            let a = self.lookup_row(a);
-            let b = self.lookup_row(b);
             let o = match col {
                 0 => b.pgn.id.cmp(&a.pgn.id),
                 1 => b.pgn.pgn().cmp(&a.pgn.pgn()),
@@ -206,7 +216,7 @@ impl SimpleModel for DbcModel {
                 3 => b.spn.name.cmp(&a.spn.name),
                 4 => self.spn_value(b).cmp(&self.spn_value(a)),
                 5 => self.spn_value(b).cmp(&self.spn_value(a)),
-                6 => self.packet_string(b.pgn).cmp(&self.packet_string(a.pgn)),
+                6 => self.packet_string(&b.pgn).cmp(&self.packet_string(&a.pgn)),
                 _ => panic!("unknown column"),
             };
             order.apply(o)
@@ -214,11 +224,12 @@ impl SimpleModel for DbcModel {
         swap(&mut list, &mut self.rows);
     }
 }
-struct Row<'a> {
-    spn: &'a SpnDefinition,
-    pgn: &'a PgnDefinition,
+#[derive(Clone)]
+struct Row {
+    spn: SpnDefinition,
+    pgn: PgnDefinition,
 }
-impl Row<'_> {
+impl Row {
     fn decode(&self, packet: &J1939Packet) -> Option<f64> {
         self.spn.parse_message(packet.data()).map(|v| v as f64)
     }
