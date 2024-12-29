@@ -131,9 +131,9 @@ checksum = "428d9aa8fbc0670b7b8d6030a7fadd0f86151cae55e4dbbece15f3780a3dfaf3"
 
 [[package]]
 name = "can_adapter"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f9ebf875b25fccee227864bbb358e8627bf0ac62bf85bcb1117ea330fd6b6c8"
+checksum = "07a4b30f7f6b4f378e6788202f923b656f246468423e2ca7a24d22a1c244d02d"
 dependencies = [
  "anyhow",
  "clap",
@@ -573,7 +573,7 @@ checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 
 [[package]]
 name = "j1939logger"
-version = "0.1.6"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "can_adapter",
