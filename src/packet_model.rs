@@ -6,7 +6,7 @@ use simple_table::simple_table::{Order, SimpleModel};
 /// simple table model to represent log
 #[derive(Clone, Default)]
 pub struct PacketModel {
-    packets: Arc<RwLock<Vec<J1939Packet>>>,
+    pub packets: Arc<RwLock<Vec<J1939Packet>>>,
 }
 
 impl PacketModel {

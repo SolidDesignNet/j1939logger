@@ -80,18 +80,13 @@ fn main() -> Result<(), anyhow::Error> {
     let mut menu = SysMenuBar::default().with_size(100, 35);
     {
         let timer = timer.clone();
-        let connection = connection.clone();
+        let packets = packets.clone();
         menu.add(
             "&Action/@fileopen Load DBC...\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_b| {
-                let conn = connection.lock().unwrap();
-                if let Some(c) = (*conn).as_ref() {
-                    load_dbc_window(c.as_ref(), &timer).expect("Canceled");
-                } else {
-                    // FIXME warn user
-                }
+                    load_dbc_window(packets.clone(), &timer).expect("Canceled");
             },
         );
     }
@@ -181,7 +176,7 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn load_dbc_window(connection: &dyn Connection, timer: &Arc<Timer>) -> Result<(), anyhow::Error> {
+fn load_dbc_window(packets: Arc<RwLock<Vec<J1939Packet>>>, timer: &Arc<Timer>) -> Result<(), anyhow::Error> {
     let mut fc = FileDialog::new(BrowseMultiFile);
     fc.set_filter("*.dbc");
     fc.show();
@@ -193,7 +188,7 @@ fn load_dbc_window(connection: &dyn Connection, timer: &Arc<Timer>) -> Result<()
     let filename = path.to_str().unwrap_or_default();
     let pgns = PgnLibrary::from_dbc_file(path.clone())
         .expect(&format!("Unable to read dbc file {}.", filename));
-    let model = DbcModel::new(pgns.pgns.values().cloned().collect(), connection);
+    let model = DbcModel::new(pgns.pgns.values().cloned().collect(), packets);
 
     let mut wind = Window::default().with_size(600, 300).with_label(filename);
     wind.set_icon(Some(PngImage::from_data(

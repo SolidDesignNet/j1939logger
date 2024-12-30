@@ -1,12 +1,12 @@
 use core::f64;
 use std::{
+    cell::RefCell,
+    collections::HashSet,
     mem::swap,
-    sync::{atomic::AtomicBool, Arc, RwLock},
-    thread,
-    time::Duration,
+    sync::{Arc, RwLock},
 };
 
-use can_adapter::{connection::Connection, packet::J1939Packet};
+use can_adapter::packet::J1939Packet;
 use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
@@ -16,51 +16,36 @@ pub struct DbcModel {
     pgns: Vec<PgnDefinition>,
     /// pgn -> packets in chronological order
     packets: Arc<RwLock<Vec<J1939Packet>>>,
+    pgns_seen: RefCell<HashSet<u32>>,
     /// meat of the struct
     rows: Vec<Row>,
     /// Most recent packet before this instant will be used.
     /// packet time, not wallclock!
     time: f64,
-    running: Arc<AtomicBool>,
-}
-impl Drop for DbcModel {
-    fn drop(&mut self) {
-        self.running
-            .store(false, std::sync::atomic::Ordering::Relaxed);
-    }
 }
 impl DbcModel {
-    pub fn new(pgns: Vec<PgnDefinition>, connection: &dyn Connection) -> DbcModel {
-        let running = Arc::new(AtomicBool::new(true));
-        let packets = Arc::new(RwLock::new(Vec::new()));
+    pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<Vec<J1939Packet>>>) -> DbcModel {
         let mut m = DbcModel {
             pgns,
+            pgns_seen: RefCell::new(HashSet::new()),
             rows: Vec::new(),
             packets,
             time: f64::MAX,
-            running,
         };
         m.restore_missing();
-        m.run(connection);
         m
     }
 
     pub fn remove_missing(self: &mut Self) {
-        let packets = self.packets.read().unwrap();
         let new_rows = self
             .rows
             .iter()
-            .filter(|row| {
-                packets
-                    .iter()
-                    .find(|packet| (0xFFFF_FF & row.pgn.id) == packet.id())
-                    .is_some()
-            })
+            .filter(|row| self.pgns_seen.borrow().contains(&(row.pgn.id& 0x3FFFFFF)))
             .cloned()
             .collect();
         self.rows = new_rows;
     }
-    pub fn restore_missing(self: & mut Self) {
+    pub fn restore_missing(self: &mut Self) {
         self.rows = calc_rows(&self.pgns);
     }
 
@@ -82,13 +67,23 @@ impl DbcModel {
     }
 
     fn last_packet(&self, id: u32) -> Option<J1939Packet> {
-        self.packets
-            .read()
-            .unwrap()
-            .iter()
-            .rev()
-            .find(|p| p.time() <= self.time && p.id() == id)
-            .cloned()
+        let mut seen = self.pgns_seen.borrow_mut();
+        if seen.is_empty() || seen.contains(&id) {
+            let p = self
+                .packets
+                .read()
+                .unwrap()
+                .iter()
+                .rev()
+                .find(|p| {
+                    seen.insert(p.id());
+                    p.time() <= self.time && p.id() == id
+                })
+                .cloned();
+            p
+        } else {
+            None
+        }
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
         let f = from as u32;
@@ -107,34 +102,23 @@ impl DbcModel {
             .collect();
     }
 
-    pub(crate) fn toggle_missing(& mut self) {
+    pub(crate) fn toggle_missing(&mut self) {
         if calc_rows(&self.pgns).len() == self.rows.len() {
             self.remove_missing();
         } else {
             self.rows = calc_rows(&self.pgns);
         }
     }
-
-    fn run(&self, connection: &dyn Connection) {
-        let running = self.running.clone();
-        if !running.load(std::sync::atomic::Ordering::Relaxed) {
-            let iter = connection.iter_for(Duration::from_secs(60 * 60 * 24 * 999));
-            let packets = self.packets.clone();
-            thread::spawn(move || {
-                for p in iter {
-                    if !running.load(std::sync::atomic::Ordering::Relaxed) {
-                        return;
-                    }
-                    packets.write().unwrap().push(p)
-                }
-            });
-        }
-    }
 }
 
 fn calc_rows<'a>(pgns: &'a Vec<PgnDefinition>) -> Vec<Row> {
     pgns.iter()
-        .flat_map(|p| p.spns.values().map(|s| Row { spn: s.clone(), pgn: p.clone() }))
+        .flat_map(|p| {
+            p.spns.values().map(|s| Row {
+                spn: s.clone(),
+                pgn: p.clone(),
+            })
+        })
         .collect()
 }
 
@@ -183,20 +167,30 @@ impl SimpleModel for DbcModel {
             5 => {
                 let row = self.rows.get(row as usize).expect("Unknown row requested");
                 let id = row.pgn.id & 0x3FFFFFF;
-                let packets = self.packets.read().unwrap();
-                let time = packets
-                    .iter()
-                    .rev()
-                    .next()
-                    .map(|p| p.time())
-                    .unwrap_or_default();
-                let data = packets
-                    .iter()
-                    .rev()
-                    .filter(|p| p.id() == id)
-                    .map_while(|p| if p.time() > time { row.decode(p) } else { None })
-                    .collect();
-                Some(Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
+                if self.pgns_seen.borrow().contains(&id) {
+                    let packets = self.packets.read().unwrap();
+                    let time = packets
+                        .iter()
+                        .rev()
+                        .next()
+                        .map(|p| p.time())
+                        .unwrap_or_default();
+                    let data = packets
+                        .iter()
+                        .rev()
+                        .filter(|p| p.id() == id)
+                        .map_while(|p| {
+                            if p.time() > time - 30.0 {
+                                row.decode(p)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    Some(Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
+                } else {
+                    None
+                }
             }
             _ => None,
         }
