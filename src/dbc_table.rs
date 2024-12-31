@@ -35,12 +35,14 @@ impl DbcModel {
         m.restore_missing();
         m
     }
-
+    pub fn set_time(&mut self, t: f64) {
+        self.time = t;
+    }
     pub fn remove_missing(self: &mut Self) {
         let new_rows = self
             .rows
             .iter()
-            .filter(|row| self.pgns_seen.borrow().contains(&(row.pgn.id& 0x3FFFFFF)))
+            .filter(|row| self.pgns_seen.borrow().contains(&(row.pgn.id & 0x3FFFFFF)))
             .cloned()
             .collect();
         self.rows = new_rows;

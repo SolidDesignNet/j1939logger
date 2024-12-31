@@ -30,14 +30,17 @@ use fltk::{
     image::PngImage,
     input::Input,
     menu::{self, MenuFlag, SysMenuBar},
-    prelude::{GroupExt, InputExt, MenuExt, TableExt, WidgetBase, WidgetExt, WindowExt},
+    prelude::{
+        GroupExt, InputExt, MenuExt, TableExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt,
+    },
     table::Table,
+    valuator::{HorNiceSlider, Slider},
     window::Window,
 };
 use packet_model::PacketModel;
 use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
-use timer::Timer;
+use timer::{Guard, Timer};
 
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
@@ -86,7 +89,7 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_b| {
-                    load_dbc_window(packets.clone(), &timer).expect("Canceled");
+                load_dbc_window(packets.clone(), &timer).expect("Canceled");
             },
         );
     }
@@ -176,7 +179,10 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn load_dbc_window(packets: Arc<RwLock<Vec<J1939Packet>>>, timer: &Arc<Timer>) -> Result<(), anyhow::Error> {
+fn load_dbc_window(
+    packets: Arc<RwLock<Vec<J1939Packet>>>,
+    timer: &Arc<Timer>,
+) -> Result<(), anyhow::Error> {
     let mut fc = FileDialog::new(BrowseMultiFile);
     fc.set_filter("*.dbc");
     fc.show();
@@ -188,7 +194,7 @@ fn load_dbc_window(packets: Arc<RwLock<Vec<J1939Packet>>>, timer: &Arc<Timer>) -
     let filename = path.to_str().unwrap_or_default();
     let pgns = PgnLibrary::from_dbc_file(path.clone())
         .expect(&format!("Unable to read dbc file {}.", filename));
-    let model = DbcModel::new(pgns.pgns.values().cloned().collect(), packets);
+    let model = DbcModel::new(pgns.pgns.values().cloned().collect(), packets.clone());
 
     let mut wind = Window::default().with_size(600, 300).with_label(filename);
     wind.set_icon(Some(PngImage::from_data(
@@ -198,14 +204,50 @@ fn load_dbc_window(packets: Arc<RwLock<Vec<J1939Packet>>>, timer: &Arc<Timer>) -
     let pack = Pack::default_fill();
 
     let mut menu = SysMenuBar::default().with_size(100, 35);
+    let mut slider = HorNiceSlider::default().with_size(75, 25);
+
     let mut table = SimpleTable::new(Table::default_fill(), model);
     table.table.end();
 
     pack.resizable(&table.table);
     pack.end();
-    table.redraw_on(&timer, chrono::Duration::milliseconds(200));
+
+    let redraw_period = chrono::Duration::milliseconds(200);
+    table.redraw_on(&timer, redraw_period);
 
     let table = Arc::new(Mutex::new(table));
+    {
+        let table = table.clone();
+        slider.set_callback(move |s| {
+            table
+                .lock()
+                .unwrap()
+                .model
+                .lock()
+                .unwrap()
+                .set_time(s.value());
+            dbg!(s.value());
+        });
+        let packets = packets.clone();
+        let guard: Arc<Mutex<Option<Guard>>> = Arc::new(Mutex::new(None));
+        guard
+            .clone()
+            .lock()
+            .unwrap()
+            .replace(timer.schedule_repeating(redraw_period, move || {
+                if slider.visible_r() {
+                    let packets = packets.read().unwrap();
+                    let last = packets.last();
+                    let max = last.map(|p| p.time()).unwrap_or(1.0);
+                    slider.set_maximum(max);
+                    slider.damage();
+                    dbg!(last, max, packets.len(), slider.minimum(), slider.maximum());
+                } else {
+                    // No longer visible, so stop timer
+                    guard.lock().unwrap().take();
+                }
+            }));
+    }
     {
         let table = table.clone();
         menu.add(
