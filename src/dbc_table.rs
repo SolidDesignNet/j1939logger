@@ -1,7 +1,5 @@
 use core::f64;
 use std::{
-    cell::RefCell,
-    collections::HashSet,
     mem::swap,
     sync::{Arc, RwLock},
 };
@@ -10,13 +8,14 @@ use can_adapter::packet::J1939Packet;
 use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
+use crate::packet_repo::PacketRepo;
+
 /// SimpleModel representing a DBC file with a Connection.
 pub struct DbcModel {
     /// PGN Definitions in row order.
     pgns: Vec<PgnDefinition>,
     /// pgn -> packets in chronological order
-    packets: Arc<RwLock<Vec<J1939Packet>>>,
-    pgns_seen: RefCell<HashSet<u32>>,
+    packets: Arc<RwLock<PacketRepo>>,
     /// meat of the struct
     rows: Vec<Row>,
     /// Most recent packet before this instant will be used.
@@ -24,10 +23,9 @@ pub struct DbcModel {
     time: f64,
 }
 impl DbcModel {
-    pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<Vec<J1939Packet>>>) -> DbcModel {
+    pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<PacketRepo>>) -> DbcModel {
         let mut m = DbcModel {
             pgns,
-            pgns_seen: RefCell::new(HashSet::new()),
             rows: Vec::new(),
             packets,
             time: f64::MAX,
@@ -42,7 +40,13 @@ impl DbcModel {
         let new_rows = self
             .rows
             .iter()
-            .filter(|row| self.pgns_seen.borrow().contains(&(row.pgn.id & 0x3FFFFFF)))
+            .filter(|row| {
+                self.packets
+                    .read()
+                    .unwrap()
+                    .map
+                    .contains_key(&(row.pgn.id & 0x3FFFFFF))
+            })
             .cloned()
             .collect();
         self.rows = new_rows;
@@ -69,23 +73,10 @@ impl DbcModel {
     }
 
     fn last_packet(&self, id: u32) -> Option<J1939Packet> {
-        let mut seen = self.pgns_seen.borrow_mut();
-        if seen.is_empty() || seen.contains(&id) {
-            let p = self
-                .packets
-                .read()
-                .unwrap()
-                .iter()
-                .rev()
-                .find(|p| {
-                    seen.insert(p.id());
-                    p.time() <= self.time && p.id() == id
-                })
-                .cloned();
-            p
-        } else {
-            None
-        }
+        return self.packets.read().unwrap().map.get(&id).map_or(None, |v| {
+            // replace with partition.  It will do a binary search.
+            v.iter().rev().find(|p| p.time() <= self.time).cloned()
+        });
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
         let f = from as u32;
@@ -169,15 +160,10 @@ impl SimpleModel for DbcModel {
             5 => {
                 let row = self.rows.get(row as usize).expect("Unknown row requested");
                 let id = row.pgn.id & 0x3FFFFFF;
-                if self.pgns_seen.borrow().contains(&id) {
-                    let packets = self.packets.read().unwrap();
-                    let time = packets
-                        .iter()
-                        .rev()
-                        .next()
-                        .map(|p| p.time())
-                        .unwrap_or_default();
-                    let data = packets
+                let repo = self.packets.read().unwrap();
+                let time = repo.packets.last().map(|p| p.time()).unwrap_or_default();
+                repo.map.get(&id).map(|vec| {
+                    let data = vec
                         .iter()
                         .rev()
                         .filter(|p| p.id() == id)
@@ -189,10 +175,8 @@ impl SimpleModel for DbcModel {
                             }
                         })
                         .collect();
-                    Some(Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
-                } else {
-                    None
-                }
+                    Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>
+                })
             }
             _ => None,
         }

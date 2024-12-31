@@ -2,6 +2,7 @@
 
 mod dbc_table;
 mod packet_model;
+mod packet_repo;
 
 #[derive(RustEmbed)]
 #[folder = "assets/"]
@@ -30,42 +31,44 @@ use fltk::{
     image::PngImage,
     input::Input,
     menu::{self, MenuFlag, SysMenuBar},
+    output::Output,
     prelude::{
         GroupExt, InputExt, MenuExt, TableExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt,
     },
     table::Table,
-    valuator::{HorNiceSlider, Slider},
+    valuator::HorNiceSlider,
     window::Window,
 };
 use packet_model::PacketModel;
+use packet_repo::PacketRepo;
 use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
-use timer::{Guard, Timer};
+use timer::Timer;
 
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
     let timer = Arc::new(Timer::new());
     let connection: Arc<Mutex<Option<Box<dyn Connection>>>> = Arc::new(Mutex::new(None));
-    let packets = Arc::new(RwLock::new(Vec::default()));
+    let packets = Arc::new(RwLock::new(PacketRepo::default()));
 
     {
         let connection = connection.clone();
         let packets = packets.clone();
         thread::Builder::new()
-            .name("packet copy".to_owned())
+            .name("main:packet copy".to_owned())
             .spawn(move || {
                 loop {
-                    // FIXME messy!
+                    // get iterator from connection if possible
                     let i = if let Some(c) = &*connection.lock().unwrap() {
                         Some(c.iter().filter_map(|o| o))
                     } else {
                         None
                     };
-                    if i.is_some() {
-                        i.unwrap().for_each(|p| {
-                            packets.write().unwrap().push(p);
-                        });
+                    if let Some(iter) = i {
+                        // make sure to unlock between writes.
+                        iter.for_each(|p| packets.write().unwrap().push(&p));
                     }
+                    // either no connection or connection closed.
                     thread::sleep(Duration::from_millis(200));
                 }
             })?;
@@ -100,20 +103,21 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_| -> () {
-                save_log(&list).expect("Unable to save packet log.");
+                save_log(&list.read().unwrap().packets).expect("Unable to save packet log.");
             },
         );
     }
     {
-        let list = packets.clone();
+        let packets = packets.clone();
         menu.add(
             "&Action/@refresh Clear\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_| {
-                list.write()
+                packets
+                    .write()
                     .expect("Unable to lock model for clear.")
-                    .clear()
+                    .clear();
             },
         );
     }
@@ -138,7 +142,7 @@ fn main() -> Result<(), anyhow::Error> {
             menu::MenuFlag::Normal,
             move |_| {
                 let read = list.read().expect("Unable to lock model for copy.");
-                let collect: Vec<String> = read.iter().map(|p| format!("{}", p)).collect();
+                let collect: Vec<String> = read.packets.iter().map(|p| format!("{}", p)).collect();
                 copy(collect.join("\n").as_str());
             },
         );
@@ -180,7 +184,7 @@ fn main() -> Result<(), anyhow::Error> {
 }
 
 fn load_dbc_window(
-    packets: Arc<RwLock<Vec<J1939Packet>>>,
+    packets: Arc<RwLock<PacketRepo>>,
     timer: &Arc<Timer>,
 ) -> Result<(), anyhow::Error> {
     let mut fc = FileDialog::new(BrowseMultiFile);
@@ -205,6 +209,7 @@ fn load_dbc_window(
 
     let mut menu = SysMenuBar::default().with_size(100, 35);
     let mut slider = HorNiceSlider::default().with_size(75, 25);
+    let mut time = Output::default().with_size(200, 20);
 
     let mut table = SimpleTable::new(Table::default_fill(), model);
     table.table.end();
@@ -219,34 +224,38 @@ fn load_dbc_window(
     {
         let table = table.clone();
         slider.set_callback(move |s| {
-            table
-                .lock()
-                .unwrap()
-                .model
-                .lock()
-                .unwrap()
-                .set_time(s.value());
-            dbg!(s.value());
+            let val = s.value();
+            let min = s.minimum();
+            let percent = (val - min) / (s.maximum() - min);
+            if percent > 0.9 {
+                time.set_value("Live...");
+                table
+                    .lock()
+                    .unwrap()
+                    .model
+                    .lock()
+                    .unwrap()
+                    .set_time(f64::MAX);
+            } else {
+                time.set_value(&val.to_string());
+                table.lock().unwrap().model.lock().unwrap().set_time(val);
+            };
         });
-        let packets = packets.clone();
-        let guard: Arc<Mutex<Option<Guard>>> = Arc::new(Mutex::new(None));
-        guard
-            .clone()
-            .lock()
-            .unwrap()
-            .replace(timer.schedule_repeating(redraw_period, move || {
-                if slider.visible_r() {
-                    let packets = packets.read().unwrap();
-                    let last = packets.last();
-                    let max = last.map(|p| p.time()).unwrap_or(1.0);
-                    slider.set_maximum(max);
-                    slider.damage();
-                    dbg!(last, max, packets.len(), slider.minimum(), slider.maximum());
-                } else {
-                    // No longer visible, so stop timer
-                    guard.lock().unwrap().take();
-                }
-            }));
+
+        timer
+            .schedule_repeating(redraw_period, move || {
+                let (min, max) = {
+                    let packets = &packets.read().unwrap().packets;
+                    (
+                        packets.first().map(|p| p.time()).unwrap_or(0.0),
+                        packets.last().map(|p| p.time()).unwrap_or(1.0),
+                    )
+                };
+                slider.set_minimum(min);
+                slider.set_maximum(max);
+                slider.damage();
+            })
+            .ignore();
     }
     {
         let table = table.clone();
@@ -356,13 +365,13 @@ fn map_address_wizard(table: Arc<Mutex<SimpleTable<DbcModel>>>) {
     });
 }
 
-fn save_log(list: &Arc<RwLock<Vec<J1939Packet>>>) -> Result<(), Error> {
+fn save_log(list: &Vec<J1939Packet>) -> Result<(), Error> {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if !fc.filenames().is_empty() {
         let mut out =
             BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
-        for p in list.read().expect("Unable to lock list.").iter() {
+        for p in list.iter() {
             out.write_all(p.to_string().as_bytes())
                 .expect("Failed to write log file.");
             out.write_all(b"\r\n").expect("Failed to write log file.");
