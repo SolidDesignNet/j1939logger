@@ -44,8 +44,8 @@ impl DbcModel {
                 self.packets
                     .read()
                     .unwrap()
-                    .map
-                    .contains_key(&(row.pgn.id & 0x3FFFFFF))
+                    .get_for(row.pgn.id & 0x3FFFFFF)
+                    .is_some()
             })
             .cloned()
             .collect();
@@ -73,8 +73,8 @@ impl DbcModel {
     }
 
     fn last_packet(&self, id: u32) -> Option<J1939Packet> {
-        return self.packets.read().unwrap().map.get(&id).map_or(None, |v| {
-            // replace with partition.  It will do a binary search.
+        return self.packets.read().unwrap().get_for(id).map_or(None, |v| {
+            // FIXME replace with partition.  It will do a binary search.
             v.iter().rev().find(|p| p.time() <= self.time).cloned()
         });
     }
@@ -161,8 +161,8 @@ impl SimpleModel for DbcModel {
                 let row = self.rows.get(row as usize).expect("Unknown row requested");
                 let id = row.pgn.id & 0x3FFFFFF;
                 let repo = self.packets.read().unwrap();
-                let time = repo.packets.last().map(|p| p.time()).unwrap_or_default();
-                repo.map.get(&id).map(|vec| {
+                let time = repo.last_time();
+                repo.get_for(id).map(|vec| {
                     let data = vec
                         .iter()
                         .rev()

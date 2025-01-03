@@ -18,7 +18,7 @@ impl PacketModel {
 
 impl SimpleModel for PacketModel {
     fn row_count(&mut self) -> usize {
-        self.packets.read().unwrap().packets.len()
+        self.packets.read().unwrap().packets().len()
     }
 
     fn column_count(&mut self) -> usize {
@@ -36,7 +36,7 @@ impl SimpleModel for PacketModel {
     fn cell(&mut self, row: i32, _col: i32) -> Option<String> {
         self.packets
             .read()
-            .unwrap().packets
+            .unwrap().packets()
             .get(row as usize)
             .map(|p| p.to_string())
     }

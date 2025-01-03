@@ -43,6 +43,7 @@ use packet_model::PacketModel;
 use packet_repo::PacketRepo;
 use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
+use socketcan::available_interfaces;
 use timer::Timer;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -103,7 +104,7 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_| -> () {
-                save_log(&list.read().unwrap().packets).expect("Unable to save packet log.");
+                save_log(&list.read().unwrap().packets()).expect("Unable to save packet log.");
             },
         );
     }
@@ -142,13 +143,15 @@ fn main() -> Result<(), anyhow::Error> {
             menu::MenuFlag::Normal,
             move |_| {
                 let read = list.read().expect("Unable to lock model for copy.");
-                let collect: Vec<String> = read.packets.iter().map(|p| format!("{}", p)).collect();
+                let collect: Vec<String> =
+                    read.packets().iter().map(|p| format!("{}", p)).collect();
                 copy(collect.join("\n").as_str());
             },
         );
     }
 
-    add_rp1210_menu(&mut menu, connection)?;
+    add_rp1210_menu(&mut menu, connection.clone())?;
+
 
     menu.add(
         "&Action/How to...\t",
@@ -182,6 +185,8 @@ fn main() -> Result<(), anyhow::Error> {
 
     Ok(())
 }
+
+mod socketcanconnection;
 
 fn load_dbc_window(
     packets: Arc<RwLock<PacketRepo>>,
@@ -245,11 +250,8 @@ fn load_dbc_window(
         timer
             .schedule_repeating(redraw_period, move || {
                 let (min, max) = {
-                    let packets = &packets.read().unwrap().packets;
-                    (
-                        packets.first().map(|p| p.time()).unwrap_or(0.0),
-                        packets.last().map(|p| p.time()).unwrap_or(1.0),
-                    )
+                    let packet_repo = packets.read().unwrap();
+                    (packet_repo.first_time(), packet_repo.last_time())
                 };
                 slider.set_minimum(min);
                 slider.set_maximum(max);
@@ -388,7 +390,7 @@ fn add_rp1210_menu(
     {
         let connection_string = connection_string.clone();
         menu.add(
-            "&RP1210/Connection String...",
+            "&Connection/RP1210/Connection String...",
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_| {
@@ -406,7 +408,7 @@ fn add_rp1210_menu(
     {
         let app_packetization = app_packetization.clone();
         menu.add(
-            "RP1210/Application Packetization",
+            "Connection/RP1210/Application Packetization",
             Shortcut::None,
             menu::MenuFlag::Toggle,
             move |_| {
@@ -419,7 +421,7 @@ fn add_rp1210_menu(
     {
         let c = channels.clone();
         menu.add(
-            "RP1210/Channel 1",
+            "Connection/RP1210/Channel 1",
             Shortcut::None,
             menu::MenuFlag::Radio,
             move |_| channel_select(&c, 1),
@@ -428,7 +430,7 @@ fn add_rp1210_menu(
     {
         let c = channels.clone();
         menu.add(
-            "RP1210/Channel 2",
+            "Connection/RP1210/Channel 2",
             Shortcut::None,
             menu::MenuFlag::Radio,
             move |_| channel_select(&c, 2),
@@ -437,18 +439,68 @@ fn add_rp1210_menu(
     {
         let c = channels.clone();
         menu.add(
-            "RP1210/_Channel 3",
+            "Connection/_RP1210/Channel 3",
             Shortcut::None,
             menu::MenuFlag::Radio,
             move |_| channel_select(&c, 3),
         );
     }
 
-    for product in rp1210_parsing::list_all_products()? {
+    add_rp1210_adapters(
+        menu,
+        &connection,
+        connection_string,
+        app_packetization,
+        channels,
+    )?;
+    add_socketcan_adapters(menu, &connection);
+
+    {
+        let connection = connection.clone();
+        menu.add(
+            "&Connection/@|| Stop",
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            move |_b| {
+                *connection.lock().unwrap() = None;
+            },
+        );
+    }
+    Ok(())
+}
+
+fn add_socketcan_adapters(menu: &mut SysMenuBar, connection: &Arc<Mutex<Option<Box<dyn Connection>>>>) {
+    let connection = connection.clone();
+    for str in available_interfaces().unwrap() {
+        menu.add(
+            &format!("Connection/Socket CAN {str}"),
+            Shortcut::None,
+            menu::MenuFlag::Normal,
+            {
+                let str = str;
+                let connection = connection.clone();
+                move |_b| {
+                    *connection.lock().unwrap() = Some(Box::new(
+                        socketcanconnection::SocketCanConnection::new(&str).expect("Unable to create socketcan"),
+                    ));
+                }
+            },
+        );
+    }
+}
+
+fn add_rp1210_adapters(
+    menu: &mut SysMenuBar,
+    connection: &Arc<Mutex<Option<Box<dyn Connection>>>>,
+    connection_string: Arc<Mutex<String>>,
+    app_packetization: Arc<Mutex<bool>>,
+    channels: Arc<Mutex<Vec<u8>>>,
+) -> Result<(), Error> {
+    Ok(for product in rp1210_parsing::list_all_products()? {
         for device in product.devices {
             let connection = connection.clone();
             let name = format!(
-                "RP1210/{}/@> {}\t",
+                "Connection/RP1210/{}/@> {}\t",
                 &product.description, &device.description
             );
             let id = product.id.clone();
@@ -499,19 +551,7 @@ fn add_rp1210_menu(
                 }
             });
         }
-    }
-    {
-        let connection = connection.clone();
-        menu.add(
-            "&RP1210/@|| Stop",
-            Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_b| {
-                *connection.lock().unwrap() = None;
-            },
-        );
-    }
-    Ok(())
+    })
 }
 
 fn channel_select(c: &Arc<Mutex<Vec<u8>>>, channel: u8) {
