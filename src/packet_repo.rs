@@ -23,10 +23,10 @@ impl PacketRepo {
     pub fn get_for(&self, id: u32) -> Option<&Vec<J1939Packet>> {
         self.map.get(&id)
     }
-    pub fn last_time(&self) -> f64 {
+    pub fn last_time(&self) -> u32 {
         self.packets.last().map(|p| p.time()).unwrap_or_default()
     }
-    pub fn first_time(&self) -> f64 {
+    pub fn first_time(&self) -> u32 {
         self.packets.first().map(|p| p.time()).unwrap_or_default()
     }
     pub fn packets(&self) -> &Vec<J1939Packet> {

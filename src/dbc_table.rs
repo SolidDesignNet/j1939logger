@@ -6,6 +6,7 @@ use std::{
 
 use can_adapter::packet::J1939Packet;
 use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
+use fltk::utils::decode_uri;
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
 use crate::packet_repo::PacketRepo;
@@ -20,7 +21,7 @@ pub struct DbcModel {
     rows: Vec<Row>,
     /// Most recent packet before this instant will be used.
     /// packet time, not wallclock!
-    time: f64,
+    time: u32,
 }
 impl DbcModel {
     pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<PacketRepo>>) -> DbcModel {
@@ -28,12 +29,12 @@ impl DbcModel {
             pgns,
             rows: Vec::new(),
             packets,
-            time: f64::MAX,
+            time: u32::MAX,
         };
         m.restore_missing();
         m
     }
-    pub fn set_time(&mut self, t: f64) {
+    pub fn set_time(&mut self, t: u32) {
         self.time = t;
     }
     pub fn remove_missing(self: &mut Self) {
@@ -161,22 +162,26 @@ impl SimpleModel for DbcModel {
                 let row = self.rows.get(row as usize).expect("Unknown row requested");
                 let id = row.pgn.id & 0x3FFFFFF;
                 let repo = self.packets.read().unwrap();
-                let time = repo.last_time();
-                repo.get_for(id).map(|vec| {
-                    let data = vec
-                        .iter()
-                        .rev()
-                        .filter(|p| p.id() == id)
-                        .map_while(|p| {
-                            if p.time() > time - 30.0 {
-                                row.decode(p)
-                            } else {
-                                None
-                            }
-                        })
-                        .collect();
-                    Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>
-                })
+                let packets = repo.get_for(id);
+                if packets.is_none() || packets.unwrap().is_empty() {
+                    // requires some packets to calculate time range.
+                    return None;
+                }
+                let packets = packets.unwrap();
+                let end = u32::min(repo.last_time(), self.time);
+                let time_stamp_weight = packets.get(0).unwrap().time_stamp_weight();
+                let start = end as i32 - (10.0 * time_stamp_weight) as i32;
+                let start = if start < 0 { 0 } else { start } as u32;
+
+                dbg!(start, end);
+
+                let start_index = packets.partition_point(|p| p.time() < start);
+                let end_index = packets.partition_point(|p| p.time() < end);
+                let data = packets[start_index..end_index]
+                    .iter()
+                    .filter_map(|p| row.decode(p))
+                    .collect();
+                Some(Box::new(SparkLine::new(data)) as Box<dyn DrawDelegate>)
             }
             _ => None,
         }

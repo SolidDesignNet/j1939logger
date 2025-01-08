@@ -136,8 +136,10 @@ dependencies = [
  "anyhow",
  "clap",
  "color-print",
+ "dbg_hex",
  "libloading",
  "rust-ini",
+ "socketcan",
 ]
 
 [[package]]
@@ -359,6 +361,12 @@ dependencies = [
  "generic-array",
  "typenum",
 ]
+
+[[package]]
+name = "dbg_hex"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "35df069ad4872b5d65ee7f5e37d12ab629834b1e162b3292a71f30ba7e8884ee"
 
 [[package]]
 name = "digest"
@@ -759,7 +767,6 @@ dependencies = [
  "regex",
  "rust-embed",
  "simple_table",
- "socketcan",
  "timer",
  "webbrowser",
  "winres",

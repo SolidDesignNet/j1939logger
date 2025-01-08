@@ -18,7 +18,10 @@ use std::{
 };
 
 use anyhow::Error;
-use can_adapter::{connection::Connection, packet::J1939Packet, rp1210::Rp1210, rp1210_parsing};
+use can_adapter::{
+    connection::{self, Connection},
+    packet::J1939Packet,
+};
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
@@ -43,7 +46,6 @@ use packet_model::PacketModel;
 use packet_repo::PacketRepo;
 use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
-use socketcan::available_interfaces;
 use timer::Timer;
 
 fn main() -> Result<(), anyhow::Error> {
@@ -152,7 +154,6 @@ fn main() -> Result<(), anyhow::Error> {
 
     add_rp1210_menu(&mut menu, connection.clone())?;
 
-
     menu.add(
         "&Action/How to...\t",
         Shortcut::None,
@@ -186,8 +187,6 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-mod socketcanconnection;
-
 fn load_dbc_window(
     packets: Arc<RwLock<PacketRepo>>,
     timer: &Arc<Timer>,
@@ -213,8 +212,18 @@ fn load_dbc_window(
     let pack = Pack::default_fill();
 
     let mut menu = SysMenuBar::default().with_size(100, 35);
-    let mut slider = HorNiceSlider::default().with_size(75, 25);
-    let mut time = Output::default().with_size(200, 20);
+
+    let mut hbox = Pack::default()
+        .with_size(100, 20)
+        .with_type(PackType::Horizontal);
+    hbox.set_spacing(4);
+
+    let mut slider = HorNiceSlider::default_fill();
+    let mut time = Output::default().with_size(80, 20);
+
+    // Why doesn't slider resize?
+    hbox.resizable(&slider.as_base_widget());
+    hbox.end();
 
     let mut table = SimpleTable::new(Table::default_fill(), model);
     table.table.end();
@@ -240,10 +249,16 @@ fn load_dbc_window(
                     .model
                     .lock()
                     .unwrap()
-                    .set_time(f64::MAX);
+                    .set_time(u32::MAX);
             } else {
-                time.set_value(&val.to_string());
-                table.lock().unwrap().model.lock().unwrap().set_time(val);
+                time.set_value(&format!("{:0.2}", val));
+                table
+                    .lock()
+                    .unwrap()
+                    .model
+                    .lock()
+                    .unwrap()
+                    .set_time(val as u32);
             };
         });
 
@@ -253,8 +268,8 @@ fn load_dbc_window(
                     let packet_repo = packets.read().unwrap();
                     (packet_repo.first_time(), packet_repo.last_time())
                 };
-                slider.set_minimum(min);
-                slider.set_maximum(max);
+                slider.set_minimum(min as f64);
+                slider.set_maximum(max as f64);
                 slider.damage();
             })
             .ignore();
@@ -446,14 +461,7 @@ fn add_rp1210_menu(
         );
     }
 
-    add_rp1210_adapters(
-        menu,
-        &connection,
-        connection_string,
-        app_packetization,
-        channels,
-    )?;
-    add_socketcan_adapters(menu, &connection);
+    add_adapters(menu, &connection, connection_string, app_packetization)?;
 
     {
         let connection = connection.clone();
@@ -469,89 +477,54 @@ fn add_rp1210_menu(
     Ok(())
 }
 
-fn add_socketcan_adapters(menu: &mut SysMenuBar, connection: &Arc<Mutex<Option<Box<dyn Connection>>>>) {
-    let connection = connection.clone();
-    for str in available_interfaces().unwrap() {
-        menu.add(
-            &format!("Connection/Socket CAN {str}"),
-            Shortcut::None,
-            menu::MenuFlag::Normal,
-            {
-                let str = str;
-                let connection = connection.clone();
-                move |_b| {
-                    *connection.lock().unwrap() = Some(Box::new(
-                        socketcanconnection::SocketCanConnection::new(&str).expect("Unable to create socketcan"),
-                    ));
-                }
-            },
-        );
-    }
-}
-
-fn add_rp1210_adapters(
+fn add_adapters(
     menu: &mut SysMenuBar,
     connection: &Arc<Mutex<Option<Box<dyn Connection>>>>,
     connection_string: Arc<Mutex<String>>,
     app_packetization: Arc<Mutex<bool>>,
-    channels: Arc<Mutex<Vec<u8>>>,
 ) -> Result<(), Error> {
-    Ok(for product in rp1210_parsing::list_all_products()? {
+    for product in connection::enumerate_connections()? {
         for device in product.devices {
-            let connection = connection.clone();
-            let name = format!(
-                "Connection/RP1210/{}/@> {}\t",
-                &product.description, &device.description
-            );
-            let id = product.id.clone();
-            let device_id = device.id;
-
-            let cs = connection_string.clone();
-            let channels = channels.clone();
-            let app_packetization = app_packetization.clone();
-            menu.add(&name, Shortcut::None, menu::MenuFlag::Normal, move |_b| {
-                // unload old DLL
-                *connection.lock().unwrap() = None;
-                eprintln!(
-                    "LOADING: {} {} channels: {:?}",
-                    id,
-                    cs.lock().unwrap(),
-                    channels.lock().unwrap()
+            for factory in device.connections {
+                let connection = connection.clone();
+                let name = format!(
+                    "Connection/{}/{}/{}\t",
+                    &product.name,
+                    &device.name,
+                    factory.name()
                 );
 
-                // load new DLL
-                let lock = cs.lock();
-                let connection_string = &*lock.unwrap();
-                let channels: Vec<Option<u8>> =
-                    channels.lock().unwrap().iter().map(|c| Some(*c)).collect();
-                let channels = if channels.is_empty() {
-                    vec![None]
-                } else {
-                    channels
-                };
-                for channel in channels {
-                    match Rp1210::new(
-                        id.as_str(),
-                        device_id,
-                        channel,
-                        connection_string,
-                        0xF9,
-                        *app_packetization.lock().unwrap(),
-                    ) {
-                        Ok(rp1210) => {
-                            *connection.lock().unwrap() =
-                                Some(Box::new(rp1210) as Box<dyn Connection + 'static>);
+                let cs = connection_string.clone();
+                let app_packetization = app_packetization.clone();
+                menu.add(
+                    &name.clone(),
+                    Shortcut::None,
+                    menu::MenuFlag::Normal,
+                    move |_b| {
+                        // unload old DLL
+                        *connection.lock().unwrap() = None;
+                        eprintln!("LOADING: {} {}", &name, cs.lock().unwrap(),);
+
+                        // load new DLL
+                        let lock = cs.lock();
+                        // FIXME do we need this?
+                        let connection_string = &*lock.unwrap();
+                        match factory.new() {
+                            Ok(conn) => {
+                                *connection.lock().unwrap() = Some(conn);
+                            }
+                            Err(err) => {
+                                message_icon_label("Fail");
+                                message_default(&format!("Failed to open adapter: {}", err));
+                                *connection.lock().unwrap() = None;
+                            }
                         }
-                        Err(err) => {
-                            message_icon_label("Fail");
-                            message_default(&format!("Failed to open adapter: {}", err));
-                            *connection.lock().unwrap() = None;
-                        }
-                    }
-                }
-            });
+                    },
+                );
+            }
         }
-    })
+    }
+    Ok(())
 }
 
 fn channel_select(c: &Arc<Mutex<Vec<u8>>>, channel: u8) {
