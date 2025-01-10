@@ -6,7 +6,6 @@ use std::{
 
 use can_adapter::packet::J1939Packet;
 use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
-use fltk::utils::decode_uri;
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
 use crate::packet_repo::PacketRepo;

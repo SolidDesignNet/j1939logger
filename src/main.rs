@@ -21,6 +21,7 @@ use anyhow::Error;
 use can_adapter::{
     connection::{self, Connection},
     packet::J1939Packet,
+    rp1210,
 };
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
@@ -400,68 +401,29 @@ fn add_rp1210_menu(
     menu: &mut SysMenuBar,
     connection: Arc<Mutex<Option<Box<dyn Connection>>>>,
 ) -> Result<(), Error> {
-    let connection_string = Arc::new(Mutex::new("J1939:Baud=500".to_string()));
+    menu.add(
+        "&Connection/RP1210/Connection String...",
+        Shortcut::None,
+        menu::MenuFlag::Normal,
+        move |_| {
+            let mut s = rp1210::CONNECTION_STRING.write().unwrap();
+            if let Some(r) = fltk::dialog::input_default("Connection String", &*s) {
+                *s = r;
+            }
+        },
+    );
 
-    {
-        let connection_string = connection_string.clone();
-        menu.add(
-            "&Connection/RP1210/Connection String...",
-            Shortcut::None,
-            menu::MenuFlag::Normal,
-            move |_| {
-                let s = connection_string.lock();
-                if let Ok(mut str) = s {
-                    if let Some(r) = fltk::dialog::input_default("Connection String", &*str) {
-                        *str = r;
-                    }
-                }
-            },
-        );
-    }
+    menu.add(
+        "Connection/RP1210/Application Packetization",
+        Shortcut::None,
+        menu::MenuFlag::Toggle,
+        move |_| {
+            let mut m = rp1210::APP_PACKETIZATION.write().unwrap();
+            *m = !*m;
+        },
+    );
 
-    let app_packetization = Arc::new(Mutex::new(false));
-    {
-        let app_packetization = app_packetization.clone();
-        menu.add(
-            "Connection/RP1210/Application Packetization",
-            Shortcut::None,
-            menu::MenuFlag::Toggle,
-            move |_| {
-                let mut m = app_packetization.lock().unwrap();
-                *m = !*m;
-            },
-        );
-    }
-    let channels = Arc::new(Mutex::new(vec![1]));
-    {
-        let c = channels.clone();
-        menu.add(
-            "Connection/RP1210/Channel 1",
-            Shortcut::None,
-            menu::MenuFlag::Radio,
-            move |_| channel_select(&c, 1),
-        );
-    }
-    {
-        let c = channels.clone();
-        menu.add(
-            "Connection/RP1210/Channel 2",
-            Shortcut::None,
-            menu::MenuFlag::Radio,
-            move |_| channel_select(&c, 2),
-        );
-    }
-    {
-        let c = channels.clone();
-        menu.add(
-            "Connection/_RP1210/Channel 3",
-            Shortcut::None,
-            menu::MenuFlag::Radio,
-            move |_| channel_select(&c, 3),
-        );
-    }
-
-    add_adapters(menu, &connection, connection_string, app_packetization)?;
+    add_adapters(menu, &connection)?;
 
     {
         let connection = connection.clone();
@@ -480,8 +442,6 @@ fn add_rp1210_menu(
 fn add_adapters(
     menu: &mut SysMenuBar,
     connection: &Arc<Mutex<Option<Box<dyn Connection>>>>,
-    connection_string: Arc<Mutex<String>>,
-    app_packetization: Arc<Mutex<bool>>,
 ) -> Result<(), Error> {
     for product in connection::enumerate_connections()? {
         for device in product.devices {
@@ -494,8 +454,6 @@ fn add_adapters(
                     factory.name()
                 );
 
-                let cs = connection_string.clone();
-                let app_packetization = app_packetization.clone();
                 menu.add(
                     &name.clone(),
                     Shortcut::None,
@@ -503,12 +461,9 @@ fn add_adapters(
                     move |_b| {
                         // unload old DLL
                         *connection.lock().unwrap() = None;
-                        eprintln!("LOADING: {} {}", &name, cs.lock().unwrap(),);
+                        eprintln!("LOADING: {name}");
 
                         // load new DLL
-                        let lock = cs.lock();
-                        // FIXME do we need this?
-                        let connection_string = &*lock.unwrap();
                         match factory.new() {
                             Ok(conn) => {
                                 *connection.lock().unwrap() = Some(conn);
@@ -525,10 +480,4 @@ fn add_adapters(
         }
     }
     Ok(())
-}
-
-fn channel_select(c: &Arc<Mutex<Vec<u8>>>, channel: u8) {
-    let mut cb = c.lock().unwrap();
-    cb.clear();
-    cb.push(channel);
 }
