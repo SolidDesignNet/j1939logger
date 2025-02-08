@@ -6,7 +6,7 @@ build = "build.rs"
 
 [dependencies]
 simple_table = { version = "0.2.0", git = "https://github.com/SolidDesignNet/simple_table" }
-can_adapter = "0.4.0"
+can_adapter = "0.4.1"
 
 # remove bundled for win32 
 fltk = { version = "1.5.3" }      #,features = ["fltk-bundled"]}
