@@ -1,18 +1,16 @@
 [package]
 name = "j1939logger"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 build = "build.rs"
 
 [dependencies]
 simple_table = { version = "0.2.0", git = "https://github.com/SolidDesignNet/simple_table" }
-#simple_table= { version = "0.1.7", path = "../simple_table" }
-#can_adapter = "0.3.1"
-can_adapter = { path = "../rp1210-rs" }
+can_adapter = "0.4.0"
 
 # remove bundled for win32 
-fltk = { version = "1.4.36" }      #,features = ["fltk-bundled"]}
-fltk-theme = { version = "0.7.3" }
+fltk = { version = "1.5.3" }      #,features = ["fltk-bundled"]}
+fltk-theme = { version = "0.7.5" }
 
 clap = { version = "4.5.23", features = ["derive"] }
 anyhow = "1.0.90"
@@ -21,7 +19,6 @@ chrono = "0.4.39"
 rust-embed = "8.5.0"
 
 canparse = { version = "^0.1.6", git = "https://github.com/battjt/canparse.git" }
-#canparse = {version="0.1.6" , path="../canparse"}
 webbrowser = { version = "1.0.3" }
 regex = { version = "1.11.1" }
 

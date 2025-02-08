@@ -21,8 +21,9 @@ use anyhow::Error;
 use can_adapter::{
     connection::{self, Connection},
     packet::J1939Packet,
-    rp1210,
 };
+#[cfg(windows)]
+use can_adapter::rp1210;
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
@@ -401,6 +402,7 @@ fn add_rp1210_menu(
     menu: &mut SysMenuBar,
     connection: Arc<Mutex<Option<Box<dyn Connection>>>>,
 ) -> Result<(), Error> {
+    #[cfg(windows)]
     menu.add(
         "&Connection/RP1210/Connection String...",
         Shortcut::None,
@@ -413,6 +415,7 @@ fn add_rp1210_menu(
         },
     );
 
+    #[cfg(windows)]
     menu.add(
         "Connection/RP1210/Application Packetization",
         Shortcut::None,
@@ -450,7 +453,7 @@ fn add_adapters(
                 let name = format!(
                     "Connection/{}/{}/{}\t",
                     &product.name,
-                    &device.name,
+                    &device.name.replace("/", "\\/"),
                     factory.name()
                 );
 

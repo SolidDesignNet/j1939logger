@@ -172,10 +172,9 @@ impl SimpleModel for DbcModel {
                 let start = end as i32 - (10.0 * time_stamp_weight) as i32;
                 let start = if start < 0 { 0 } else { start } as u32;
 
-                dbg!(start, end);
-
                 let start_index = packets.partition_point(|p| p.time() < start);
                 let end_index = packets.partition_point(|p| p.time() < end);
+                
                 let data = packets[start_index..end_index]
                     .iter()
                     .filter_map(|p| row.decode(p))
