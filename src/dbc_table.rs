@@ -1,6 +1,8 @@
 use core::f64;
 use std::{
-    mem::swap,
+    collections::HashMap,
+    fmt::Debug,
+    hash::Hash,
     sync::{Arc, RwLock},
 };
 
@@ -36,7 +38,7 @@ impl DbcModel {
     pub fn set_time(&mut self, t: u32) {
         self.time = t;
     }
-    pub fn remove_missing(self: &mut Self) {
+    pub fn remove_missing(&mut self) {
         let new_rows = self
             .rows
             .iter()
@@ -51,7 +53,7 @@ impl DbcModel {
             .collect();
         self.rows = new_rows;
     }
-    pub fn restore_missing(self: &mut Self) {
+    pub fn restore_missing(&mut self) {
         self.rows = calc_rows(&self.pgns);
     }
 
@@ -73,7 +75,7 @@ impl DbcModel {
     }
 
     fn last_packet(&self, id: u32) -> Option<J1939Packet> {
-        return self.packets.read().unwrap().get_for(id).map_or(None, |v| {
+        return self.packets.read().unwrap().get_for(id).and_then(|v| {
             // FIXME replace with partition.  It will do a binary search.
             v.iter().rev().find(|p| p.time() <= self.time).cloned()
         });
@@ -104,7 +106,7 @@ impl DbcModel {
     }
 }
 
-fn calc_rows<'a>(pgns: &'a Vec<PgnDefinition>) -> Vec<Row> {
+fn calc_rows(pgns: &[PgnDefinition]) -> Vec<Row> {
     pgns.iter()
         .flat_map(|p| {
             p.spns.values().map(|s| Row {
@@ -148,7 +150,7 @@ impl SimpleModel for DbcModel {
             0 => Some(format!("{:08X}", row.pgn.id)),
             1 => Some(format!("{:04X}", row.pgn.pgn())), // FIXME missing 3 bits
             2 => Some(format!("{:02X}", row.pgn.sa())),
-            3 => Some(row.spn.name.clone().into()),
+            3 => Some(row.spn.name.clone()),
             4 => Some(self.spn_value(row)),
             6 => Some(self.packet_string(&row.pgn)),
             _ => None,
@@ -168,13 +170,13 @@ impl SimpleModel for DbcModel {
                 }
                 let packets = packets.unwrap();
                 let end = u32::min(repo.last_time(), self.time);
-                let time_stamp_weight = packets.get(0).unwrap().time_stamp_weight();
+                let time_stamp_weight = packets.first().unwrap().time_stamp_weight();
                 let start = end as i32 - (10.0 * time_stamp_weight) as i32;
                 let start = if start < 0 { 0 } else { start } as u32;
 
                 let start_index = packets.partition_point(|p| p.time() < start);
                 let end_index = packets.partition_point(|p| p.time() < end);
-                
+
                 let data = packets[start_index..end_index]
                     .iter()
                     .filter_map(|p| row.decode(p))
@@ -185,29 +187,31 @@ impl SimpleModel for DbcModel {
         }
     }
 
-    fn sort(&mut self, col: usize, order: Order) {
+    fn sort(&mut self, column: usize, order: Order) {
         if let Order::None = order {
             return;
         }
-        let mut list = vec![];
-        swap(&mut list, &mut self.rows);
-        list.sort_by(|a, b| {
-            let o = match col {
-                0 => b.pgn.id.cmp(&a.pgn.id),
-                1 => b.pgn.pgn().cmp(&a.pgn.pgn()),
-                2 => b.pgn.sa().cmp(&a.pgn.sa()),
-                3 => b.spn.name.cmp(&a.spn.name),
-                4 => self.spn_value(b).cmp(&self.spn_value(a)),
-                5 => self.spn_value(b).cmp(&self.spn_value(a)),
-                6 => self.packet_string(&b.pgn).cmp(&self.packet_string(&a.pgn)),
-                _ => panic!("unknown column"),
-            };
-            order.apply(o)
-        });
-        swap(&mut list, &mut self.rows);
+
+        self.rows = match column {
+            0 => sort_with(&self.rows, |row: &Row| row.pgn.id),
+            1 => sort_with(&self.rows, |row: &Row| row.pgn.pgn()),
+            2 => sort_with(&self.rows, |row: &Row| row.pgn.sa()),
+            3 => sort_with(&self.rows, |row: &Row| row.spn.name.clone()),
+            4 | 5 => sort_with(&self.rows, |row| self.spn_value(row)),
+            6 => sort_with(&self.rows, |row: &Row| self.packet_string(&row.pgn)),
+            _ => panic!("unknown column"),
+        };
     }
 }
-#[derive(Clone)]
+
+fn sort_with<T: Ord>(the_rows: &[Row], extract_fn: impl Fn(&Row) -> T) -> Vec<Row> {
+    let values: HashMap<&Row, T> = the_rows.iter().map(|row| (row, extract_fn(row))).collect();
+    let mut rows: Vec<Row> = the_rows.into();
+    rows.sort_by(|a: &Row, b: &Row| values.get(b).cmp(&values.get(a)));
+    rows
+}
+
+#[derive(Clone, Debug)]
 struct Row {
     spn: SpnDefinition,
     pgn: PgnDefinition,
@@ -217,12 +221,25 @@ impl Row {
         self.spn.parse_message(packet.data()).map(|v| v as f64)
     }
 }
+impl Hash for Row {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.spn.name.hash(state);
+        self.spn.id.hash(state);
+        self.pgn.id.hash(state);
+    }
+}
+impl Eq for Row {}
+impl PartialEq for Row {
+    fn eq(&self, other: &Self) -> bool {
+        self.spn == other.spn && self.pgn == other.pgn
+    }
+}
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn verify_bin_search() {
-        let v = vec![1., 2., 3., 4., 5.];
+        let v = [1., 2., 3., 4., 5.];
         assert_eq!(v.partition_point(|&x| x <= 2.5), 2);
         assert_eq!(v.partition_point(|&x| x <= 3.0), 3);
         assert_eq!(v.partition_point(|&x| x <= 3.5), 3);

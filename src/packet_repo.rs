@@ -13,7 +13,7 @@ impl PacketRepo {
         self.packets.push(packet.clone());
         self.map
             .entry(packet.id() & (0x3FFFFFF))
-            .or_insert_with(|| Vec::new())
+            .or_default()
             .push(packet.clone());
     }
     pub fn clear(&mut self) {

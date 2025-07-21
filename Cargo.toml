@@ -6,22 +6,23 @@ build = "build.rs"
 
 [dependencies]
 simple_table = { version = "0.2.0", git = "https://github.com/SolidDesignNet/simple_table" }
-#can_adapter = "0.4.1"
-can_adapter = {path = "../rp1210-rs" }
+#simple_table = { path="../simple_table" }
+can_adapter = "0.4.2"
+#can_adapter = {path = "../can_adapter" }
 
 # remove bundled for win32 
-fltk = { version = "1.5.4" }      #,features = ["fltk-bundled"]}
-fltk-theme = { version = "0.7.5" }
+fltk = { version = "1.5.9" }      #,features = ["fltk-bundled"]}
+fltk-theme = { version = "0.7.9" }
 
-clap = { version = "4.5.31", features = ["derive"] }
+clap = { version = "4.5.41", features = ["derive"] }
 anyhow = "1.0.97"
 timer = "0.2.0"
-chrono = "0.4.40"
-rust-embed = "8.6.0"
-
-canparse = { version = "^0.1.6", git = "https://github.com/battjt/canparse.git" }
-webbrowser = { version = "1.0.3" }
+chrono = "0.4.41"
+rust-embed = "8.7.2"
+canparse = { version = "^0.1.7", git = "https://github.com/battjt/canparse.git" }
+webbrowser = { version = "1.0.5" }
 regex = { version = "1.11.1" }
 
 [target.'cfg(windows)'.build-dependencies]
 winres = { version = "^0.1" }
+

@@ -18,12 +18,13 @@ use std::{
 };
 
 use anyhow::Error;
-use can_adapter::{
-    connection::{self, Connection},
-    packet::J1939Packet,
-};
 #[cfg(windows)]
 use can_adapter::rp1210;
+use can_adapter::{
+    connection::{self, Connection},
+    j1939::J1939,
+    packet::J1939Packet,
+};
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
 use fltk::{
@@ -64,12 +65,10 @@ fn main() -> Result<(), anyhow::Error> {
             .spawn(move || {
                 loop {
                     // get iterator from connection if possible
-                    let i = if let Some(c) = &*connection.lock().unwrap() {
-                        Some(c.iter().filter_map(|o| o))
-                    } else {
-                        None
-                    };
-                    if let Some(iter) = i {
+                    if let Some(connection) = (*connection.lock().unwrap()).as_deref_mut() {
+                        let mut iter = connection.iter().flatten();
+                        let addr = 0xF9;
+                        let iter = J1939::receive_tp(connection, addr, false, &mut iter);
                         // make sure to unlock between writes.
                         iter.for_each(|p| packets.write().unwrap().push(&p));
                     }
@@ -107,8 +106,8 @@ fn main() -> Result<(), anyhow::Error> {
             "&Action/@filesave Save...\t",
             Shortcut::None,
             menu::MenuFlag::Normal,
-            move |_| -> () {
-                save_log(&list.read().unwrap().packets()).expect("Unable to save packet log.");
+            move |_| {
+                save_log(list.read().unwrap().packets()).expect("Unable to save packet log.");
             },
         );
     }
@@ -147,8 +146,7 @@ fn main() -> Result<(), anyhow::Error> {
             menu::MenuFlag::Normal,
             move |_| {
                 let read = list.read().expect("Unable to lock model for copy.");
-                let collect: Vec<String> =
-                    read.packets().iter().map(|p| format!("{}", p)).collect();
+                let collect: Vec<String> = read.packets().iter().map(|p| format!("{p}")).collect();
                 copy(collect.join("\n").as_str());
             },
         );
@@ -203,7 +201,7 @@ fn load_dbc_window(
     let path = fc.filename();
     let filename = path.to_str().unwrap_or_default();
     let pgns = PgnLibrary::from_dbc_file(path.clone())
-        .expect(&format!("Unable to read dbc file {}.", filename));
+        .unwrap_or_else(|_| panic!("Unable to read dbc file {filename}."));
     let model = DbcModel::new(pgns.pgns.values().cloned().collect(), packets.clone());
 
     let mut wind = Window::default().with_size(600, 300).with_label(filename);
@@ -234,7 +232,7 @@ fn load_dbc_window(
     pack.end();
 
     let redraw_period = chrono::Duration::milliseconds(200);
-    table.redraw_on(&timer, redraw_period);
+    table.redraw_on(timer, redraw_period);
 
     let table = Arc::new(Mutex::new(table));
     {
@@ -253,7 +251,7 @@ fn load_dbc_window(
                     .unwrap()
                     .set_time(u32::MAX);
             } else {
-                time.set_value(&format!("{:0.2}", val));
+                time.set_value(&format!("{val:0.2}"));
                 table
                     .lock()
                     .unwrap()
@@ -384,7 +382,7 @@ fn map_address_wizard(table: Arc<Mutex<SimpleTable<DbcModel>>>) {
     });
 }
 
-fn save_log(list: &Vec<J1939Packet>) -> Result<(), Error> {
+fn save_log(list: &[J1939Packet]) -> Result<(), Error> {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if !fc.filenames().is_empty() {
@@ -467,13 +465,13 @@ fn add_adapters(
                         eprintln!("LOADING: {name}");
 
                         // load new DLL
-                        match factory.new() {
+                        match factory.create() {
                             Ok(conn) => {
                                 *connection.lock().unwrap() = Some(conn);
                             }
                             Err(err) => {
                                 message_icon_label("Fail");
-                                message_default(&format!("Failed to open adapter: {}", err));
+                                message_default(&format!("Failed to open adapter: {err}"));
                                 *connection.lock().unwrap() = None;
                             }
                         }
