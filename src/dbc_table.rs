@@ -4,9 +4,10 @@ use std::{
     fmt::Debug,
     hash::Hash,
     sync::{Arc, RwLock},
+    time::{Duration, Instant},
 };
 
-use can_adapter::packet::J1939Packet;
+use can_adapter::packet::Packet;
 use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
 use simple_table::simple_table::{DrawDelegate, Order, SimpleModel, SparkLine};
 
@@ -22,7 +23,7 @@ pub struct DbcModel {
     rows: Vec<Row>,
     /// Most recent packet before this instant will be used.
     /// packet time, not wallclock!
-    time: u32,
+    time: Duration,
 }
 impl DbcModel {
     pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<PacketRepo>>) -> DbcModel {
@@ -30,12 +31,12 @@ impl DbcModel {
             pgns,
             rows: Vec::new(),
             packets,
-            time: u32::MAX,
+            time: Duration::MAX,
         };
         m.restore_missing();
         m
     }
-    pub fn set_time(&mut self, t: u32) {
+    pub fn set_time(&mut self, t: Duration) {
         self.time = t;
     }
     pub fn remove_missing(&mut self) {
@@ -74,10 +75,10 @@ impl DbcModel {
             .map_or("no packet".to_string(), |p| p.to_string())
     }
 
-    fn last_packet(&self, id: u32) -> Option<J1939Packet> {
+    fn last_packet(&self, id: u32) -> Option<Packet> {
         return self.packets.read().unwrap().get_for(id).and_then(|v| {
             // FIXME replace with partition.  It will do a binary search.
-            v.iter().rev().find(|p| p.time() <= self.time).cloned()
+            v.iter().rev().find(|p| p.time().unwrap_or_default() <= self.time).map(|p|p.into())
         });
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
@@ -169,13 +170,12 @@ impl SimpleModel for DbcModel {
                     return None;
                 }
                 let packets = packets.unwrap();
-                let end = u32::min(repo.last_time(), self.time);
-                let time_stamp_weight = packets.first().unwrap().time_stamp_weight();
-                let start = end as i32 - (10.0 * time_stamp_weight) as i32;
-                let start = if start < 0 { 0 } else { start } as u32;
+                let end = Duration::min(repo.last_time(), self.time);
+                // FIXME
+                let start = Duration::default();
 
-                let start_index = packets.partition_point(|p| p.time() < start);
-                let end_index = packets.partition_point(|p| p.time() < end);
+                let start_index = packets.partition_point(|p| p.time().unwrap_or_default() < start);
+                let end_index = packets.partition_point(|p| p.time().unwrap_or_default() < end);
 
                 let data = packets[start_index..end_index]
                     .iter()
@@ -188,6 +188,7 @@ impl SimpleModel for DbcModel {
     }
 
     fn sort(&mut self, column: usize, order: Order) {
+        let start = Instant::now();
         if let Order::None = order {
             return;
         }
@@ -201,6 +202,9 @@ impl SimpleModel for DbcModel {
             6 => sort_with(&self.rows, |row: &Row| self.packet_string(&row.pgn)),
             _ => panic!("unknown column"),
         };
+        let duration = Instant::now().duration_since(start);
+        let rows = self.rows.len();
+        eprintln!("sort rows {rows} duration: {duration:?}");
     }
 }
 
@@ -217,8 +221,8 @@ struct Row {
     pgn: PgnDefinition,
 }
 impl Row {
-    fn decode(&self, packet: &J1939Packet) -> Option<f64> {
-        self.spn.parse_message(packet.data()).map(|v| v as f64)
+    fn decode(&self, packet: &Packet) -> Option<f64> {
+        self.spn.parse_message(packet.payload.as_slice()).map(|v| v as f64)
     }
 }
 impl Hash for Row {

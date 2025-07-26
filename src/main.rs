@@ -22,8 +22,8 @@ use anyhow::Error;
 use can_adapter::rp1210;
 use can_adapter::{
     connection::{self, Connection},
-    j1939::J1939,
-    packet::J1939Packet,
+    j1939::{j1939_packet::J1939Packet, J1939},
+    packet::Packet,
 };
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;
@@ -65,12 +65,12 @@ fn main() -> Result<(), anyhow::Error> {
             .spawn(move || {
                 loop {
                     // get iterator from connection if possible
-                    if let Some(connection) = (*connection.lock().unwrap()).as_deref_mut() {
-                        let mut iter = connection.iter().flatten();
+                    if let Some(connection) = (*connection.lock().unwrap()).as_deref() {
+                        let mut iter = connection.iter().flatten().map(|p| p.into());
                         let addr = 0xF9;
                         let iter = J1939::receive_tp(connection, addr, false, &mut iter);
                         // make sure to unlock between writes.
-                        iter.for_each(|p| packets.write().unwrap().push(&p));
+                        iter.for_each(|p| packets.write().unwrap().push(p));
                     }
                     // either no connection or connection closed.
                     thread::sleep(Duration::from_millis(200));
@@ -249,7 +249,7 @@ fn load_dbc_window(
                     .model
                     .lock()
                     .unwrap()
-                    .set_time(u32::MAX);
+                    .set_time(Duration::MAX);
             } else {
                 time.set_value(&format!("{val:0.2}"));
                 table
@@ -258,7 +258,7 @@ fn load_dbc_window(
                     .model
                     .lock()
                     .unwrap()
-                    .set_time(val as u32);
+                    .set_time(Duration::from_secs_f64(val));
             };
         });
 
@@ -268,8 +268,8 @@ fn load_dbc_window(
                     let packet_repo = packets.read().unwrap();
                     (packet_repo.first_time(), packet_repo.last_time())
                 };
-                slider.set_minimum(min as f64);
-                slider.set_maximum(max as f64);
+                slider.set_minimum(min .as_secs_f64());
+                slider.set_maximum(max .as_secs_f64());
                 slider.damage();
             })
             .ignore();
@@ -388,7 +388,7 @@ fn save_log(list: &[J1939Packet]) -> Result<(), Error> {
     if !fc.filenames().is_empty() {
         let mut out =
             BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
-        for p in list.iter() {
+        for p in list.iter(){
             out.write_all(p.to_string().as_bytes())
                 .expect("Failed to write log file.");
             out.write_all(b"\r\n").expect("Failed to write log file.");
