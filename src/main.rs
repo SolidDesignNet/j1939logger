@@ -15,6 +15,8 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     thread,
     time::Duration,
+    u16::MAX,
+    u64,
 };
 
 use anyhow::Error;
@@ -41,6 +43,7 @@ use fltk::{
         GroupExt, InputExt, MenuExt, TableExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt,
     },
     table::Table,
+    text::TextDisplay,
     valuator::HorNiceSlider,
     window::Window,
 };
@@ -217,11 +220,20 @@ fn load_dbc_window(
         .with_type(PackType::Horizontal);
     hbox.set_spacing(4);
 
-    let mut slider = HorNiceSlider::default_fill();
+    Frame::default().with_size(60,20).with_label("Time");
+    let mut time_slider = HorNiceSlider::default_fill();
+    time_slider.set_tooltip("This allows you to scroll back in time.");
+    time_slider.set_value(f64::MAX);
     let mut time = Output::default().with_size(80, 20);
 
+    Frame::default().with_size(100,20).with_label("Chart Duration");
+    let mut line_length_slider = HorNiceSlider::default_fill();
+    time_slider.set_tooltip("How mch time should charts represent.");
+    line_length_slider.set_maximum(5.0 * 60.0);
+    let mut line_length = Output::default().with_size(80, 20);
+
     // Why doesn't slider resize?
-    hbox.resizable(&slider.as_base_widget());
+    hbox.resizable(&time_slider.as_base_widget());
     hbox.end();
 
     let mut table = SimpleTable::new(Table::default_fill(), model);
@@ -236,7 +248,7 @@ fn load_dbc_window(
     let table = Arc::new(Mutex::new(table));
     {
         let table = table.clone();
-        slider.set_callback(move |s| {
+        time_slider.set_callback(move |s| {
             let val = s.value();
             let min = s.minimum();
             let percent = (val - min) / (s.maximum() - min);
@@ -260,19 +272,33 @@ fn load_dbc_window(
                     .set_time(Duration::from_secs_f64(val));
             };
         });
-
-        timer
-            .schedule_repeating(redraw_period, move || {
-                let (min, max) = {
-                    let packet_repo = packets.read().unwrap();
-                    (packet_repo.first_time(), packet_repo.last_time())
-                };
-                slider.set_minimum(min .as_secs_f64());
-                slider.set_maximum(max .as_secs_f64());
-                slider.damage();
-            })
-            .ignore();
     }
+    {
+        let table = table.clone();
+        line_length_slider.set_callback(move |s| {
+            let val = s.value();
+            line_length.set_value(&format!("{val:0.2}"));
+            table
+                .lock()
+                .unwrap()
+                .model
+                .lock()
+                .unwrap()
+                .set_line_length(Duration::from_secs_f64(val));
+        });
+    }
+    timer
+        .schedule_repeating(redraw_period, move || {
+            let (min, max) = {
+                let packet_repo = packets.read().unwrap();
+                (packet_repo.first_time(), packet_repo.last_time())
+            };
+            time_slider.set_minimum(min.as_secs_f64());
+            time_slider.set_maximum(max.as_secs_f64());
+            time_slider.damage();
+        })
+        .ignore();
+
     {
         let table = table.clone();
         menu.add(
@@ -387,7 +413,7 @@ fn save_log(list: &[J1939Packet]) -> Result<(), Error> {
     if !fc.filenames().is_empty() {
         let mut out =
             BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
-        for p in list.iter(){
+        for p in list.iter() {
             out.write_all(p.to_string().as_bytes())
                 .expect("Failed to write log file.");
             out.write_all(b"\r\n").expect("Failed to write log file.");

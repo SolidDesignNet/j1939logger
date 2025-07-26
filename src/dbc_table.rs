@@ -24,6 +24,8 @@ pub struct DbcModel {
     /// Most recent packet before this instant will be used.
     /// packet time, not wallclock!
     time: Duration,
+    // how long should the spark line be
+    line_length: Duration,
 }
 impl DbcModel {
     pub fn new(pgns: Vec<PgnDefinition>, packets: Arc<RwLock<PacketRepo>>) -> DbcModel {
@@ -32,6 +34,7 @@ impl DbcModel {
             rows: Vec::new(),
             packets,
             time: Duration::MAX,
+            line_length:Duration::from_secs(10)
         };
         m.restore_missing();
         m
@@ -108,6 +111,10 @@ impl DbcModel {
             self.rows = calc_rows(&self.pgns);
         }
     }
+    
+    pub fn set_line_length(&mut self, line_length: Duration) {
+        self.line_length = line_length;
+    }
 }
 
 fn calc_rows(pgns: &[PgnDefinition]) -> Vec<Row> {
@@ -174,9 +181,8 @@ impl SimpleModel for DbcModel {
                 }
                 let packets = packets.unwrap();
                 let end = Duration::min(repo.last_time(), self.time);
-                let d30 = Duration::from_secs(30);
-                let start = if end > d30 {
-                    end - d30
+                let start = if end > self.line_length {
+                    end - self.line_length
                 } else {
                     Duration::default()
                 };
