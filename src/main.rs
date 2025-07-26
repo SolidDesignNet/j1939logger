@@ -23,7 +23,6 @@ use can_adapter::rp1210;
 use can_adapter::{
     connection::{self, Connection},
     j1939::{j1939_packet::J1939Packet, J1939},
-    packet::Packet,
 };
 use canparse::pgn::PgnLibrary;
 use dbc_table::DbcModel;

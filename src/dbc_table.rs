@@ -78,7 +78,10 @@ impl DbcModel {
     fn last_packet(&self, id: u32) -> Option<Packet> {
         return self.packets.read().unwrap().get_for(id).and_then(|v| {
             // FIXME replace with partition.  It will do a binary search.
-            v.iter().rev().find(|p| p.time().unwrap_or_default() <= self.time).map(|p|p.into())
+            v.iter()
+                .rev()
+                .find(|p| p.time().unwrap_or_default() <= self.time)
+                .map(|p| p.into())
         });
     }
     pub fn map_address(&mut self, from: u8, to: u8) {
@@ -171,8 +174,12 @@ impl SimpleModel for DbcModel {
                 }
                 let packets = packets.unwrap();
                 let end = Duration::min(repo.last_time(), self.time);
-                // FIXME
-                let start = Duration::default();
+                let d30 = Duration::from_secs(30);
+                let start = if end > d30 {
+                    end - d30
+                } else {
+                    Duration::default()
+                };
 
                 let start_index = packets.partition_point(|p| p.time().unwrap_or_default() < start);
                 let end_index = packets.partition_point(|p| p.time().unwrap_or_default() < end);
@@ -222,7 +229,9 @@ struct Row {
 }
 impl Row {
     fn decode(&self, packet: &Packet) -> Option<f64> {
-        self.spn.parse_message(packet.payload.as_slice()).map(|v| v as f64)
+        self.spn
+            .parse_message(packet.payload.as_slice())
+            .map(|v| v as f64)
     }
 }
 impl Hash for Row {
