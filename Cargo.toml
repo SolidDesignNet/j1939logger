@@ -12,7 +12,7 @@ can_adapter = "0.5.0"
 
 # remove bundled for win32 
 # 1.5.10 crashed
-fltk = { version = "=1.5.9" }      #,features = ["fltk-bundled"]}
+fltk = { version = "1.5.10" }      #,features = ["fltk-bundled"]}
 fltk-theme = { version = "0.7.9" }
 
 clap = { version = "4.5.41", features = ["derive"] }

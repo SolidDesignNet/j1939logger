@@ -34,7 +34,7 @@ impl DbcModel {
             rows: Vec::new(),
             packets,
             time: Duration::MAX,
-            line_length:Duration::from_secs(10)
+            line_length: Duration::from_secs(10),
         };
         m.restore_missing();
         m
@@ -111,7 +111,7 @@ impl DbcModel {
             self.rows = calc_rows(&self.pgns);
         }
     }
-    
+
     pub fn set_line_length(&mut self, line_length: Duration) {
         self.line_length = line_length;
     }
@@ -128,17 +128,27 @@ fn calc_rows(pgns: &[PgnDefinition]) -> Vec<Row> {
         .collect()
 }
 
+const COLUMNS: [&str; 8] = [
+    "ID",
+    "PGN",
+    "SA",
+    "Name",
+    "Value",
+    "Chart",
+    "Packet",
+    "Description",
+];
 impl SimpleModel for DbcModel {
     fn row_count(&mut self) -> usize {
         self.rows.len()
     }
 
     fn column_count(&mut self) -> usize {
-        7
+        COLUMNS.len()
     }
 
     fn header(&mut self, col: usize) -> String {
-        ["ID", "PGN", "SA", "Name", "Value", "Chart", "Packet"][col].into()
+        COLUMNS[col].into()
     }
 
     fn column_width(&mut self, col: usize) -> u32 {
@@ -150,6 +160,7 @@ impl SimpleModel for DbcModel {
             4 => 160,
             5 => 120,
             6 => 400,
+            7 => 150,
             _ => 80,
         }
     }
@@ -159,11 +170,12 @@ impl SimpleModel for DbcModel {
 
         match col {
             0 => Some(format!("{:08X}", row.pgn.id)),
-            1 => Some(format!("{:04X}", row.pgn.pgn())), // FIXME missing 3 bits
+            1 => Some(format!("{:04X}", row.pgn.pgn())),
             2 => Some(format!("{:02X}", row.pgn.sa())),
             3 => Some(row.spn.name.clone()),
             4 => Some(self.spn_value(row)),
             6 => Some(self.packet_string(&row.pgn)),
+            7 => Some(row.spn.description.clone()),
             _ => None,
         }
     }
@@ -200,8 +212,7 @@ impl SimpleModel for DbcModel {
         }
     }
 
-    fn sort(&mut self, column: usize, order: Order) {
-        let start = Instant::now();
+    fn sort<'a>(&mut self, column: usize, order: Order) {
         if let Order::None = order {
             return;
         }
@@ -213,18 +224,20 @@ impl SimpleModel for DbcModel {
             3 => sort_with(&self.rows, |row: &Row| row.spn.name.clone()),
             4 | 5 => sort_with(&self.rows, |row| self.spn_value(row)),
             6 => sort_with(&self.rows, |row: &Row| self.packet_string(&row.pgn)),
+            7 => sort_with(&self.rows, |row: &Row| row.spn.description.clone()),
             _ => panic!("unknown column"),
         };
-        let duration = Instant::now().duration_since(start);
-        let rows = self.rows.len();
-        eprintln!("sort rows {rows} duration: {duration:?}");
+        match order {
+            Order::Descending => self.rows.reverse(),
+            Order::Ascending | Order::None => (),
+        }
     }
 }
 
 fn sort_with<T: Ord>(the_rows: &[Row], extract_fn: impl Fn(&Row) -> T) -> Vec<Row> {
     let values: HashMap<&Row, T> = the_rows.iter().map(|row| (row, extract_fn(row))).collect();
     let mut rows: Vec<Row> = the_rows.into();
-    rows.sort_by(|a: &Row, b: &Row| values.get(b).cmp(&values.get(a)));
+    rows.sort_by(|a: &Row, b: &Row| values.get(a).cmp(&values.get(b)));
     rows
 }
 

@@ -64,7 +64,7 @@ struct Cli {
 
 }
 fn main() -> Result<(), anyhow::Error> {
-    // repaint the table on a schedule, to demonstrate updating models.
+    // repaint the table in a timer
     let timer = Arc::new(Timer::new());
     let packets = Arc::new(RwLock::new(PacketRepo::default()));
 
