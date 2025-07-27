@@ -15,8 +15,6 @@ use std::{
     sync::{Arc, Mutex, RwLock},
     thread,
     time::Duration,
-    u16::MAX,
-    u64,
 };
 
 use anyhow::Error;
@@ -25,8 +23,10 @@ use can_adapter::rp1210;
 use can_adapter::{
     connection::{self, Connection},
     j1939::{j1939_packet::J1939Packet, J1939},
+    ConnectionDescriptor,
 };
 use canparse::pgn::PgnLibrary;
+use clap::Parser;
 use dbc_table::DbcModel;
 use fltk::{
     app::{self, copy},
@@ -43,7 +43,6 @@ use fltk::{
         GroupExt, InputExt, MenuExt, TableExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt,
     },
     table::Table,
-    text::TextDisplay,
     valuator::HorNiceSlider,
     window::Window,
 };
@@ -53,12 +52,38 @@ use rust_embed::RustEmbed;
 use simple_table::simple_table::SimpleTable;
 use timer::Timer;
 
+#[derive(Parser, Debug)] // requires `derive` feature
+#[command(name = "logger")]
+#[command(version,about = "CAN logger", long_about = None)]
+struct Cli {
+    #[clap(subcommand)]
+    connection_descriptor: ConnectionDescriptor,
+
+    #[clap(short,long)]
+    dbc: Vec<String>,
+
+}
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table on a schedule, to demonstrate updating models.
     let timer = Arc::new(Timer::new());
-    let connection: Arc<Mutex<Option<Box<dyn Connection>>>> = Arc::new(Mutex::new(None));
     let packets = Arc::new(RwLock::new(PacketRepo::default()));
 
+    // handle command line
+    let cli = Cli::try_parse();
+    let connection = match cli {
+        Ok(cli) => {
+            for file in cli.dbc {
+                load_dbc_window(packets.clone(), timer.clone(), file.into())?
+            }
+            cli.connection_descriptor.connect().ok()
+        }
+        Err(msg) => {
+            eprintln!("{msg}");
+            None
+        }
+    };
+
+    let connection: Arc<Mutex<Option<Box<dyn Connection>>>> = Arc::new(Mutex::new(connection));
     {
         let connection = connection.clone();
         let packets = packets.clone();
@@ -98,7 +123,7 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::None,
             menu::MenuFlag::Normal,
             move |_b| {
-                load_dbc_window(packets.clone(), &timer).expect("Canceled");
+                dbc_window(packets.clone(), timer.clone()).expect("Canceled");
             },
         );
     }
@@ -189,10 +214,7 @@ fn main() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
-fn load_dbc_window(
-    packets: Arc<RwLock<PacketRepo>>,
-    timer: &Arc<Timer>,
-) -> Result<(), anyhow::Error> {
+fn dbc_window(packets: Arc<RwLock<PacketRepo>>, timer: Arc<Timer>) -> Result<(), anyhow::Error> {
     let mut fc = FileDialog::new(BrowseMultiFile);
     fc.set_filter("*.dbc");
     fc.show();
@@ -201,6 +223,14 @@ fn load_dbc_window(
         return Ok(());
     }
     let path = fc.filename();
+    load_dbc_window(packets, timer, path)
+}
+
+fn load_dbc_window(
+    packets: Arc<RwLock<PacketRepo>>,
+    timer: Arc<Timer>,
+    path: std::path::PathBuf,
+) -> Result<(), Error> {
     let filename = path.to_str().unwrap_or_default();
     let pgns = PgnLibrary::from_dbc_file(path.clone())
         .unwrap_or_else(|_| panic!("Unable to read dbc file {filename}."));
@@ -220,17 +250,23 @@ fn load_dbc_window(
         .with_type(PackType::Horizontal);
     hbox.set_spacing(4);
 
-    Frame::default().with_size(60,20).with_label("Time");
+    Frame::default().with_size(60, 20).with_label("Time (s)");
     let mut time_slider = HorNiceSlider::default_fill();
     time_slider.set_tooltip("This allows you to scroll back in time.");
     time_slider.set_value(f64::MAX);
     let mut time = Output::default().with_size(80, 20);
+    time.set_value("Live...");
 
-    Frame::default().with_size(100,20).with_label("Chart Duration");
+    Frame::default()
+        .with_size(120, 20)
+        .with_label("Chart Duration (s)");
     let mut line_length_slider = HorNiceSlider::default_fill();
     time_slider.set_tooltip("How mch time should charts represent.");
-    line_length_slider.set_maximum(5.0 * 60.0);
+    line_length_slider.set_maximum(10.0);
+    line_length_slider.set_minimum(1.0);
+    line_length_slider.set_value(10.0);
     let mut line_length = Output::default().with_size(80, 20);
+    line_length.set_value("Max");
 
     // Why doesn't slider resize?
     hbox.resizable(&time_slider.as_base_widget());
@@ -243,7 +279,7 @@ fn load_dbc_window(
     pack.end();
 
     let redraw_period = chrono::Duration::milliseconds(200);
-    table.redraw_on(timer, redraw_period);
+    table.redraw_on(&timer, redraw_period);
 
     let table = Arc::new(Mutex::new(table));
     {
@@ -276,7 +312,7 @@ fn load_dbc_window(
     {
         let table = table.clone();
         line_length_slider.set_callback(move |s| {
-            let val = s.value();
+            let val = 2.0f64.powf(s.value());
             line_length.set_value(&format!("{val:0.2}"));
             table
                 .lock()
