@@ -16,6 +16,10 @@ The log uses the adapter to decode the J1939 Transport Protocol if available, bu
 
 Loading a DBC file will open another window which decodes the signals defined in the DBC file.  If the DBC file has incorrect source addresses defined (sometimes FEx is used as a placeholder), Action/Map Address... will allow you to change the SA for all signals with the wrong SA.  Copy and paste also works in this window.
 
+I use the SLCAN adapter: https://www.amazon.com/dp/B0CY9R7PBP
+
+I have also successfully used NEXIQ, Noregon, Vector, and Peak adapters.
+
 ### Goal
 CAN logging with very light analysis and scripting.  This needs to be simple, not a replacemnent for CANAlyzer.
 
