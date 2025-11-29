@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use simple_table::simple_table::{Order, SimpleModel};
+use simple_table::simple_model::{Order, SimpleModel};
 
 use crate::packet_repo::PacketRepo;
 
@@ -17,6 +17,10 @@ impl PacketModel {
 }
 
 impl SimpleModel for PacketModel {
+    fn all_row_height(&mut self) -> Option<u32> {
+        Some(12)
+    }
+
     fn row_count(&mut self) -> usize {
         self.packets.read().unwrap().packets().len()
     }
@@ -26,7 +30,7 @@ impl SimpleModel for PacketModel {
     }
 
     fn header(&mut self, _col: usize) -> String {
-        "packet".into()
+        "".into()
     }
 
     fn column_width(&mut self, _col: usize) -> u32 {
@@ -36,7 +40,8 @@ impl SimpleModel for PacketModel {
     fn cell(&mut self, row: i32, _col: i32) -> Option<String> {
         self.packets
             .read()
-            .unwrap().packets()
+            .unwrap()
+            .packets()
             .get(row as usize)
             .map(|p| p.to_string())
     }

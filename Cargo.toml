@@ -5,25 +5,23 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-simple_table = { version = "0.2.0", git = "https://github.com/SolidDesignNet/simple_table" }
+simple_table = { version = "0.3.1"}
 #simple_table = { path="../simple_table" }
-can_adapter = "0.5.0"
-#can_adapter = {path = "../can_adapter" }
+can_adapter = "1.0.2"
 
 # remove bundled for win32 
-# 1.5.10 crashed
-fltk = { version = "1.5.10" }      #,features = ["fltk-bundled"]}
+fltk = { version = "1.5.22" }      #,features = ["fltk-bundled"]}
 fltk-theme = { version = "0.7.9" }
 
-clap = { version = "4.5.41", features = ["derive"] }
-anyhow = "1.0.97"
+clap = { version = "4.5.52", features = ["derive"] }
+anyhow = "1.0.100"
 timer = "0.2.0"
-chrono = "0.4.41"
-rust-embed = "8.7.2"
+chrono = "0.4.42"
+rust-embed = "8.9.0"
 canparse = { version = "^0.1.7", git = "https://github.com/battjt/canparse.git" }
-webbrowser = { version = "1.0.5" }
-regex = { version = "1.11.1" }
+webbrowser = { version = "1.0.6" }
+regex = { version = "1.12.2" }
 
 [target.'cfg(windows)'.build-dependencies]
-winres = { version = "^0.1" }
+winres = { version = "0.1.12" }
 
