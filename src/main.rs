@@ -32,36 +32,35 @@ use fltk::{
     app::{self, copy},
     button::Button,
     dialog::{message_default, message_icon_label, FileDialog, FileDialogType::BrowseMultiFile},
-    enums::{self, Mode, Shortcut},
+    enums::{Font, Mode, Shortcut},
     frame::Frame,
     group::{Flex, Pack, PackType},
     image::PngImage,
     input::Input,
     menu::{self, MenuFlag, SysMenuBar},
     output::Output,
-    prelude::{
-        GroupExt, InputExt, MenuExt, TableExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt,
-    },
-    table::Table,
+    prelude::{GroupExt, InputExt, MenuExt, ValuatorExt, WidgetBase, WidgetExt, WindowExt},
     valuator::HorNiceSlider,
     window::Window,
 };
 use packet_model::PacketModel;
 use packet_repo::PacketRepo;
 use rust_embed::RustEmbed;
-use simple_table::simple_table::SimpleTable;
+use simple_table::joe_table::JoeTable;
 use timer::Timer;
 
-#[derive(Parser, Debug)] // requires `derive` feature
+#[derive(Parser, Debug)]
 #[command(name = "logger")]
 #[command(version,about = "CAN logger", long_about = None)]
 struct Cli {
     #[clap(subcommand)]
     connection_descriptor: ConnectionDescriptor,
 
-    #[clap(short,long)]
+    #[clap(short, long)]
     dbc: Vec<String>,
 
+    #[clap(short, long, default_value_t = 0xF9)]
+    source_address: u8,
 }
 fn main() -> Result<(), anyhow::Error> {
     // repaint the table in a timer
@@ -153,7 +152,9 @@ fn main() -> Result<(), anyhow::Error> {
         );
     }
 
-    let table = Table::default_fill();
+    let mut table = JoeTable::new(PacketModel::new(packets.clone()));
+    table.set_font(Font::Courier, 8);
+    table.init();
     {
         let mut table = table.clone();
         menu.add(
@@ -161,19 +162,23 @@ fn main() -> Result<(), anyhow::Error> {
             Shortcut::Ctrl | 'a',
             menu::MenuFlag::Normal,
             move |_| {
-                table.set_selection(0, 0, table.rows(), table.cols());
+                table.select_rows(0..table.row_count());
             },
         );
     }
     {
         let list = packets.clone();
+        let table = table.clone();
         menu.add(
             "&Edit/Copy\t",
             Shortcut::Ctrl | 'c',
             menu::MenuFlag::Normal,
             move |_| {
                 let read = list.read().expect("Unable to lock model for copy.");
-                let collect: Vec<String> = read.packets().iter().map(|p| format!("{p}")).collect();
+                let collect: Vec<String> = read.packets()[table.get_selection()]
+                    .iter()
+                    .map(|p| format!("{p}"))
+                    .collect();
                 copy(collect.join("\n").as_str());
             },
         );
@@ -191,10 +196,7 @@ fn main() -> Result<(), anyhow::Error> {
         },
     );
 
-    let mut simple_table = SimpleTable::new(table.clone(), PacketModel::new(packets));
-    simple_table.set_font(enums::Font::Screen, 18);
-    table.end();
-    pack.resizable(&table);
+    pack.resizable(&*table);
     pack.end();
 
     wind.end();
@@ -206,7 +208,7 @@ fn main() -> Result<(), anyhow::Error> {
     )?));
     wind.show();
 
-    simple_table.redraw_on(&timer, chrono::Duration::milliseconds(200));
+    table.redraw_on(&timer, chrono::Duration::milliseconds(200));
 
     // run the app
     app.run()?;
@@ -272,10 +274,11 @@ fn load_dbc_window(
     hbox.resizable(&time_slider.as_base_widget());
     hbox.end();
 
-    let mut table = SimpleTable::new(Table::default_fill(), model);
-    table.table.end();
+    let mut table = JoeTable::new(model);
+    table.set_font(Font::Helvetica, 8);
+    table.init();
 
-    pack.resizable(&table.table);
+    pack.resizable(&*table);
     pack.end();
 
     let redraw_period = chrono::Duration::milliseconds(200);
@@ -364,17 +367,15 @@ fn load_dbc_window(
         );
     }
     {
-        let mut table = table
-            .lock()
-            .expect("Unable to lock simple table")
-            .table
-            .clone();
+        let table = table.clone();
         menu.add(
             "&Edit/Select All\t",
             Shortcut::Ctrl | 'a',
             menu::MenuFlag::Normal,
             move |_| {
-                table.set_selection(0, 0, table.rows(), table.cols());
+                let mut table = table.lock().expect("Unable to lock simple table");
+                let rows = table.row_count() - 1;
+                table.select_rows(0..rows);
             },
         );
     }
@@ -385,11 +386,16 @@ fn load_dbc_window(
             Shortcut::Ctrl | 'c',
             menu::MenuFlag::Normal,
             move |_| {
+                let table = &table.lock().expect("Unable to lock simple table.");
                 app::copy(
                     &table
+                        .selection
                         .lock()
-                        .expect("Unable to lock simple table.")
-                        .copy("\t", "\n"),
+                        .unwrap()
+                        .clone()
+                        .map(|row| table.cell(row, 0).unwrap_or_default())
+                        .collect::<Vec<String>>()
+                        .join("\n"),
                 );
             },
         );
@@ -401,7 +407,7 @@ fn load_dbc_window(
     Ok(())
 }
 
-fn map_address_wizard(table: Arc<Mutex<SimpleTable<DbcModel>>>) {
+fn map_address_wizard(table: Arc<Mutex<JoeTable<DbcModel>>>) {
     let mut wind = Window::default()
         .with_size(100, 180)
         .with_label("Map Address");
@@ -447,12 +453,10 @@ fn save_log(list: &[J1939Packet]) -> Result<(), Error> {
     let mut fc = FileDialog::new(fltk::dialog::FileDialogType::BrowseSaveFile);
     fc.show();
     if !fc.filenames().is_empty() {
-        let mut out =
-            BufWriter::new(File::create(fc.filename()).expect("Failed to create log file."));
+        let mut out = BufWriter::new(File::create(fc.filename())?);
         for p in list.iter() {
-            out.write_all(p.to_string().as_bytes())
-                .expect("Failed to write log file.");
-            out.write_all(b"\r\n").expect("Failed to write log file.");
+            out.write_all(p.to_string().as_bytes())?;
+            out.write_all(b"\r\n")?;
         }
     }
     Ok(())
