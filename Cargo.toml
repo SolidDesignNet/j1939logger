@@ -1,7 +1,13 @@
 [package]
 name = "j1939logger"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
+license = "MIT"
+description = "Simple CAN logger and DBC display typically used to diagnose vehicles."
+homepage = "https://github.com/SolidDesignNet/j1939logger"
+repository = "https://github.com/SolidDesignNet/j1939logger"
+readme = "README.md"
+keywords = ["rp1210", "slcan", "j2534", "CAN", "j1939"]
 build = "build.rs"
 
 [dependencies]
