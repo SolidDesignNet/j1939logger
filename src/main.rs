@@ -74,7 +74,7 @@ fn main() -> Result<(), anyhow::Error> {
             for file in cli.dbc {
                 load_dbc_window(packets.clone(), timer.clone(), file.into())?
             }
-            cli.connection_descriptor.connect(cli.source_address).ok()
+            cli.connection_descriptor.connect().ok()
         }
         Err(msg) => {
             eprintln!("{msg}");

@@ -7,7 +7,7 @@ build = "build.rs"
 [dependencies]
 simple_table = { version = "0.3.1"}
 #simple_table = { path="../simple_table" }
-can_adapter = "1.0.2"
+can_adapter = "1.0.3"
 
 # remove bundled for win32 
 fltk = { version = "1.5.22" }      #,features = ["fltk-bundled"]}
