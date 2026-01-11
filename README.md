@@ -28,10 +28,10 @@ CAN logging with very light analysis and scripting.  This needs to be simple, no
 I develop on Linux and cross compile for Windows. https://github.com/cross-rs/cross?tab=readme-ov-file#installation 
 
 * for Linux: `cargo build --release`
-* for Windows 64 bit: `cross build --target x86_64-pc-windows-gnu --release`
-* for Windows 32 bit: `cross build --target i686-pc-windows-gnu --release`
+* ~~for Windows 64 bit: `cross build --target x86_64-pc-windows-gnu --release`~~ No longer works for me. I had to install the x86_64-pc-windows-gnu toochain and the native ubuntu libraries g++-mingw-w64 and gcc-mingw-w64-x86-64, then `cargo build --release --target x86_64-pc-windows-gnu`
+* ~~for Windows 32 bit: `cross build --target i686-pc-windows-gnu --release`~~ No longer works for me. I'm not pursuing this anymore.
 
-To compile on Windows for 32 bit (to support old RP1210 adapters). To build using Win32 32 bit gnu toolchain:
+_I no longer do this and will not support this method any more._ To compile on Windows for 32 bit (to support old RP1210 adapters). To build using Win32 32 bit gnu toolchain:
 
 1. Install MSYS2.
 2. Update MSYS2 with `pacman -S mingw-w64-i686-cmake mingw-w64-i686-make mingw-w64-i686-gcc curl tar git --needed`
