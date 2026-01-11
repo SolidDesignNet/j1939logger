@@ -3,6 +3,7 @@
 mod dbc_table;
 mod packet_model;
 mod packet_repo;
+mod canparse;
 
 #[derive(RustEmbed)]
 #[folder = "assets/"]

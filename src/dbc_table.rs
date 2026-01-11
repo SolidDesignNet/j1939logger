@@ -8,8 +8,11 @@ use std::{
 };
 
 use can_adapter::packet::Packet;
-use canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
-use simple_table::{simple_model::{DrawDelegate, Order, SimpleModel}, spark_line::SparkLine};
+use crate::canparse::pgn::{ParseMessage, PgnDefinition, SpnDefinition};
+use simple_table::{
+    simple_model::{DrawDelegate, Order, SimpleModel},
+    spark_line::SparkLine,
+};
 
 use crate::packet_repo::PacketRepo;
 
